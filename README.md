@@ -30,11 +30,17 @@ npx expo run:android
 ## Usage
 
 ```ts
-import { editVideo } from 'expo-media-edit';
+import { editVideo, addProgressListener, cancelEdit } from 'expo-media-edit';
+
+// Subscribe to progress before starting
+const sub = addProgressListener(({ progress }) => {
+  console.log(`Progress: ${Math.round(progress * 100)}%`);
+});
 
 const outputUri = await editVideo({
   inputUri: 'file:///path/to/video.mp4',
   trim: { startMs: 0, endMs: 15000 },
+  quality: 'medium',
   overlays: [
     {
       type: 'text',
@@ -62,6 +68,14 @@ const outputUri = await editVideo({
     trimToVideo: true,
   },
 });
+
+sub.remove(); // always clean up the listener
+```
+
+To cancel an in-progress edit:
+
+```ts
+await cancelEdit(); // the editVideo() promise rejects with code "CANCELLED"
 ```
 
 ## API
@@ -72,7 +86,7 @@ Edit a video and return the URI of the output file.
 
 ```ts
 type EditJob = {
-  inputUri: string;       // Local file URI (file://...)
+  inputUri: string;       // Local file URI (file://...) or https:// URL
   outputUri?: string;     // Optional output path; defaults to a temp file
   trim?: {
     startMs: number;      // Start time in milliseconds
@@ -80,6 +94,7 @@ type EditJob = {
   };
   overlays?: OverlayItem[];
   audio?: AudioMix;
+  quality?: 'low' | 'medium' | 'high'; // Default: 'high'
 };
 
 type OverlayItem =
@@ -135,6 +150,20 @@ type VideoInfo = {
 
 Extract a JPEG thumbnail from a video at the given timestamp. Returns a `file://` URI.
 
+### `addProgressListener(callback: (event: ProgressEvent) => void): Subscription`
+
+Subscribe to progress events during `editVideo()`. Returns a subscription with a `remove()` method.
+
+```ts
+type ProgressEvent = { progress: number }; // 0.0–1.0
+```
+
+Always call `sub.remove()` after `editVideo()` resolves or rejects.
+
+### `cancelEdit(): Promise<void>`
+
+Cancel an in-progress `editVideo()` call. The `editVideo` promise rejects with error code `"CANCELLED"`.
+
 ### `cleanTempFiles(): Promise<number>`
 
 Delete all temporary files created by expo-media-edit. Returns the number of files deleted.
@@ -152,17 +181,13 @@ Uses AVFoundation:
 
 Uses MediaCodec + MediaMuxer:
 - **Trim**: `MediaExtractor` + `MediaMuxer` stream copy (no re-encode).
-- **Overlays**: Frame-by-frame decode via `MediaMetadataRetriever`, Canvas draw, YUV420 re-encode via `MediaCodec`.
-- **Audio**: `MediaExtractor` stream copy for original audio and music track.
-
-> **Note**: Android audio volume scaling via stream copy is not supported (requires PCM decode/re-encode). Both tracks are copied at their encoded levels. Full volume mixing is planned for v0.2.
+- **Overlays**: Frame-by-frame decode via `MediaMetadataRetriever`, Canvas draw, YUV420 re-encode via `MediaCodec`. Quality controlled via bitrate (low: 1Mbps, medium: 2Mbps, high: 4Mbps).
+- **Audio**: Stream copy when `volume == 1.0`; PCM decode → scale → AAC re-encode for other volume values. Rotation metadata preserved via `MediaMuxer.setOrientationHint()`.
 
 ## Known limitations
 
-- Remote URLs (HTTPS) are not supported — local `file://` URIs only.
-- Video rotation metadata is not applied during overlay compositing on Android.
-- Background processing is not supported.
-- Progress callbacks are not yet implemented.
+- Background processing is not supported (the app must stay in the foreground during editing).
+- Android audio mixing does not support simultaneous multi-track volume scaling (original + music both at non-1.0 volume in the same output file). Each track is scaled independently.
 
 ## License
 

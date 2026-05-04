@@ -42,12 +42,14 @@ data class EditJob(
   val outputUri: String?,
   val trim: TrimOptions?,
   val overlays: List<OverlayItem>,
-  val audio: AudioMixOptions?
+  val audio: AudioMixOptions?,
+  val quality: String
 ) {
   companion object {
     @Suppress("UNCHECKED_CAST")
     fun fromMap(map: Map<String, Any?>): EditJob {
       val outputUri = map["outputUri"] as? String
+      val quality = map["quality"] as? String ?: "high"
 
       val trim = (map["trim"] as? Map<String, Any?>)?.let { t ->
         TrimOptions(
@@ -75,6 +77,7 @@ data class EditJob(
           }
           "image" -> {
             val uri = o["uri"] as? String ?: return@forEach
+            if (uri.contains("../") || (!uri.startsWith("file://") && !uri.startsWith("https://"))) return@forEach
             overlays.add(OverlayItem.Image(ImageOverlayItem(
               uri = uri,
               x = (o["x"] as? Number)?.toFloat() ?: 0f,
@@ -91,6 +94,7 @@ data class EditJob(
 
       val audio = (map["audio"] as? Map<String, Any?>)?.let { a ->
         val uri = a["uri"] as? String ?: return@let null
+        if (uri.contains("../")) return@let null
         AudioMixOptions(
           uri = uri,
           volume = (a["volume"] as? Number)?.toFloat() ?: 1f,
@@ -100,7 +104,7 @@ data class EditJob(
         )
       }
 
-      return EditJob(outputUri = outputUri, trim = trim, overlays = overlays, audio = audio)
+      return EditJob(outputUri = outputUri, trim = trim, overlays = overlays, audio = audio, quality = quality)
     }
   }
 }

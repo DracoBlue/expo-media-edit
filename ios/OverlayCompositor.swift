@@ -89,7 +89,10 @@ public class OverlayCompositor {
     videoSize: CGSize,
     duration: CMTime
   ) -> CALayer? {
-    let filePath = opts.uri.replacingOccurrences(of: "file://", with: "")
+    guard !opts.uri.contains("../") else { return nil }
+    let filePath = opts.uri.hasPrefix("file://")
+      ? opts.uri.replacingOccurrences(of: "file://", with: "")
+      : opts.uri
     guard let image = UIImage(contentsOfFile: filePath) else { return nil }
 
     let layerWidth = CGFloat(opts.width) * videoSize.width

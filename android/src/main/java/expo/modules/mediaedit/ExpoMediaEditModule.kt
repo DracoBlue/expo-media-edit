@@ -2,6 +2,7 @@ package expo.modules.mediaedit
 
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Bundle
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -9,13 +10,18 @@ import java.io.File
 
 class ExpoMediaEditModule : Module() {
 
+  @Volatile private var cancelRequested = false
+
   override fun definition() = ModuleDefinition {
     Name("ExpoMediaEdit")
+
+    Events("onProgress")
 
     AsyncFunction("editVideo") { inputUri: String, jobMap: Map<String, Any?>, promise: Promise ->
       val ctx = requireNotNull(appContext.reactContext) { "React context not available" }
       val job = EditJob.fromMap(jobMap)
       val parsedInputUri = Uri.parse(inputUri)
+      cancelRequested = false
 
       val outputFile = if (job.outputUri != null) {
         val path = Uri.parse(job.outputUri).path
@@ -25,18 +31,36 @@ class ExpoMediaEditModule : Module() {
         createTempFile(ctx, "output", ".mp4")
       }
 
-      VideoEditor(ctx).edit(
-        inputUri = parsedInputUri,
-        outputFile = outputFile,
-        job = job,
-        progressCallback = { _ -> },
-        completion = { result ->
-          result.fold(
-            onSuccess = { uri -> promise.resolve(uri.toString()) },
-            onFailure = { e -> promise.reject("EDIT_FAILED", e.message ?: "Unknown error", e) }
-          )
-        }
-      )
+      Thread {
+        VideoEditor(ctx).edit(
+          inputUri = parsedInputUri,
+          outputFile = outputFile,
+          job = job,
+          progressCallback = { progress ->
+            val bundle = Bundle().apply { putDouble("progress", progress.toDouble()) }
+            sendEvent("onProgress", bundle)
+          },
+          cancelCheck = { cancelRequested },
+          completion = { result ->
+            cancelRequested = false
+            result.fold(
+              onSuccess = { uri -> promise.resolve(uri.toString()) },
+              onFailure = { e ->
+                if (e is CancellationException) {
+                  promise.reject("CANCELLED", "Edit was cancelled", e)
+                } else {
+                  promise.reject("EDIT_FAILED", e.message ?: "Unknown error", e)
+                }
+              }
+            )
+          }
+        )
+      }.start()
+    }
+
+    AsyncFunction("cancelEdit") { promise: Promise ->
+      cancelRequested = true
+      promise.resolve(null)
     }
 
     AsyncFunction("getVideoInfo") { uri: String, promise: Promise ->
@@ -50,7 +74,6 @@ class ExpoMediaEditModule : Module() {
         val fps = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)?.toFloat() ?: 0f
         val codec = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_CODEC)
         val fileSize = if (uri.startsWith("file://")) File(uri.removePrefix("file://")).length() else 0L
-
         promise.resolve(mapOf(
           "durationMs" to durationMs.toDouble(),
           "width" to width.toDouble(),
@@ -73,7 +96,6 @@ class ExpoMediaEditModule : Module() {
           (timeMs * 1000).toLong(),
           MediaMetadataRetriever.OPTION_CLOSEST_SYNC
         )
-
         if (bitmap != null) {
           val outputFile = createTempFile(ctx, "thumb", ".jpg")
           outputFile.outputStream().use { out ->
@@ -100,3 +122,5 @@ class ExpoMediaEditModule : Module() {
     }
   }
 }
+
+class CancellationException(message: String) : Exception(message)

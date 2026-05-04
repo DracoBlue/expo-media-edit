@@ -11,40 +11,56 @@ class VideoEditor(private val context: Context) {
     outputFile: File,
     job: EditJob,
     progressCallback: (Float) -> Unit,
+    cancelCheck: () -> Boolean,
     completion: (Result<Uri>) -> Unit
   ) {
+    val tempFiles = mutableListOf<File>()
     try {
-      // Step 1: Trim (stream copy, no re-encode)
+      if (cancelCheck()) throw CancellationException("Cancelled before start")
+
       val trimmedFile = if (job.trim != null) {
-        VideoTrimmer(context).trim(inputUri, job.trim)
+        VideoTrimmer(context).trim(inputUri, job.trim).also { tempFiles.add(it) }
       } else {
-        VideoTrimmer(context).copyToTemp(inputUri)
+        VideoTrimmer(context).copyToTemp(inputUri).also { tempFiles.add(it) }
       }
 
-      // Step 2: Burn-in overlays (re-encode video track)
+      progressCallback(0.1f)
+      if (cancelCheck()) throw CancellationException("Cancelled after trim")
+
       val overlaidFile = if (job.overlays.isNotEmpty()) {
-        OverlayCompositor(context).composite(trimmedFile, job.overlays).also {
-          if (it != trimmedFile) trimmedFile.delete()
-        }
+        OverlayCompositor(context).composite(
+          inputFile = trimmedFile,
+          overlays = job.overlays,
+          quality = job.quality,
+          progressCallback = { p -> progressCallback(0.1f + p * 0.75f) },
+          cancelCheck = cancelCheck
+        ).also { tempFiles.add(it) }
       } else {
+        progressCallback(0.85f)
         trimmedFile
       }
 
-      // Step 3: Mix audio
+      if (cancelCheck()) throw CancellationException("Cancelled after overlay")
+
       val finalFile = if (job.audio != null) {
-        AudioMixer(context).mix(overlaidFile, job.audio).also {
-          if (it != overlaidFile) overlaidFile.delete()
-        }
+        AudioMixer(context).mix(overlaidFile, job.audio).also { tempFiles.add(it) }
       } else {
         overlaidFile
       }
 
-      // Step 4: Move to output
+      progressCallback(0.95f)
+
       finalFile.copyTo(outputFile, overwrite = true)
-      if (finalFile != outputFile) finalFile.delete()
+      tempFiles.forEach { if (it != outputFile) it.delete() }
 
       completion(Result.success(Uri.fromFile(outputFile)))
+    } catch (e: CancellationException) {
+      tempFiles.forEach { it.delete() }
+      outputFile.delete()
+      completion(Result.failure(e))
     } catch (e: Exception) {
+      tempFiles.forEach { it.delete() }
+      outputFile.delete()
       completion(Result.failure(e))
     }
   }

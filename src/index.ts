@@ -1,11 +1,17 @@
-export { EditJob, OverlayItem, TextOverlay, ImageOverlay, AudioMix, VideoInfo, ThumbnailOptions } from './types';
+export { EditJob, OverlayItem, TextOverlay, ImageOverlay, AudioMix, VideoInfo, ThumbnailOptions, ProgressEvent } from './types';
 
-import ExpoMediaEditModule from './ExpoMediaEditModule';
-import type { EditJob, VideoInfo, ThumbnailOptions } from './types';
+import ExpoMediaEditModule, { emitter } from './ExpoMediaEditModule';
+import type { EditJob, VideoInfo, ThumbnailOptions, ProgressEvent } from './types';
 
-/**
- * Validates an EditJob and throws a descriptive error if invalid.
- */
+function validateUri(uri: string, label: string): void {
+  if (uri.includes('../')) {
+    throw new Error(`${label} must not contain path traversal sequences.`);
+  }
+  if (!uri.startsWith('file://') && !uri.startsWith('https://') && !uri.startsWith('http://')) {
+    throw new Error(`${label} must be a file:// or https:// URI.`);
+  }
+}
+
 function validateEditJob(job: EditJob): void {
   if (!job.inputUri || typeof job.inputUri !== 'string' || job.inputUri.trim() === '') {
     throw new Error('editVideo: inputUri is required and must be a non-empty string.');
@@ -42,6 +48,7 @@ function validateEditJob(job: EditJob): void {
         if (!overlay.uri || typeof overlay.uri !== 'string') {
           throw new Error(`editVideo: overlays[${i}].uri is required for image overlays.`);
         }
+        validateUri(overlay.uri, `editVideo: overlays[${i}].uri`);
         if (typeof overlay.width !== 'number' || overlay.width <= 0 || overlay.width > 1) {
           throw new Error(`editVideo: overlays[${i}].width must be a number between 0.0 and 1.0.`);
         }
@@ -62,6 +69,7 @@ function validateEditJob(job: EditJob): void {
     if (!job.audio.uri || typeof job.audio.uri !== 'string') {
       throw new Error('editVideo: audio.uri is required and must be a non-empty string.');
     }
+    validateUri(job.audio.uri, 'editVideo: audio.uri');
     if (job.audio.volume !== undefined && (job.audio.volume < 0 || job.audio.volume > 2)) {
       throw new Error('editVideo: audio.volume must be between 0.0 and 2.0.');
     }
@@ -72,25 +80,51 @@ function validateEditJob(job: EditJob): void {
       throw new Error('editVideo: audio.originalVolume must be between 0.0 and 2.0.');
     }
   }
+  if (job.quality !== undefined && !['low', 'medium', 'high'].includes(job.quality)) {
+    throw new Error("editVideo: quality must be 'low', 'medium', or 'high'.");
+  }
+}
+
+/**
+ * Listen for progress events during editVideo().
+ * Returns a subscription that must be removed when done.
+ *
+ * @example
+ * const sub = addProgressListener(({ progress }) => console.log(progress));
+ * await editVideo(job);
+ * sub.remove();
+ */
+export function addProgressListener(callback: (event: ProgressEvent) => void) {
+  return emitter.addListener<ProgressEvent>('onProgress', callback);
 }
 
 /**
  * Edit a video: trim, add text/image overlays, mix audio.
  * Returns a file URI pointing to the output video.
+ *
+ * Subscribe to progress events with addProgressListener() before calling this.
  */
 export async function editVideo(job: EditJob): Promise<string> {
   validateEditJob(job);
 
-  const { inputUri, outputUri, trim, overlays, audio } = job;
+  const { inputUri, outputUri, trim, overlays, audio, quality } = job;
 
-  // Build the job dictionary to pass to native (without inputUri which is a separate param)
   const jobDict: Record<string, unknown> = {};
   if (outputUri !== undefined) jobDict.outputUri = outputUri;
   if (trim !== undefined) jobDict.trim = trim;
   if (overlays !== undefined) jobDict.overlays = overlays;
   if (audio !== undefined) jobDict.audio = audio;
+  if (quality !== undefined) jobDict.quality = quality;
 
   return ExpoMediaEditModule.editVideo(inputUri, jobDict);
+}
+
+/**
+ * Cancel an in-progress editVideo() call.
+ * The editVideo promise will reject with error code "CANCELLED".
+ */
+export async function cancelEdit(): Promise<void> {
+  return ExpoMediaEditModule.cancelEdit();
 }
 
 /**

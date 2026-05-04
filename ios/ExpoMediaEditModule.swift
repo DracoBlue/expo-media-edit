@@ -2,8 +2,13 @@ import ExpoModulesCore
 import AVFoundation
 
 public class ExpoMediaEditModule: Module {
+  private var activeExportSession: AVAssetExportSession?
+  private var progressTimer: Timer?
+
   public func definition() -> ModuleDefinition {
     Name("ExpoMediaEdit")
+
+    Events("onProgress")
 
     AsyncFunction("editVideo") { (inputUri: String, jobDict: [String: Any], promise: Promise) in
       guard let inputURL = URL(string: inputUri) else {
@@ -25,16 +30,40 @@ public class ExpoMediaEditModule: Module {
         inputURL: inputURL,
         outputURL: outputURL,
         job: job,
-        progress: { _ in },
-        completion: { result in
+        onSessionReady: { [weak self] session in
+          self?.activeExportSession = session
+          DispatchQueue.main.async {
+            self?.progressTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+              guard let s = self?.activeExportSession else { return }
+              self?.sendEvent("onProgress", ["progress": s.progress])
+            }
+          }
+        },
+        completion: { [weak self] result in
+          DispatchQueue.main.async {
+            self?.progressTimer?.invalidate()
+            self?.progressTimer = nil
+            self?.activeExportSession = nil
+          }
           switch result {
           case .success(let url):
+            self?.sendEvent("onProgress", ["progress": 1.0])
             promise.resolve(url.absoluteString)
           case .failure(let error):
-            promise.reject("EDIT_FAILED", error.localizedDescription)
+            if (error as NSError).domain == AVFoundationErrorDomain &&
+               (error as NSError).code == AVError.exportFailed.rawValue {
+              promise.reject("CANCELLED", "Export was cancelled")
+            } else {
+              promise.reject("EDIT_FAILED", error.localizedDescription)
+            }
           }
         }
       )
+    }
+
+    AsyncFunction("cancelEdit") { (promise: Promise) in
+      self.activeExportSession?.cancelExport()
+      promise.resolve(nil)
     }
 
     AsyncFunction("getVideoInfo") { (uri: String, promise: Promise) in

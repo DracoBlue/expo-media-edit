@@ -39,6 +39,7 @@ export type EditJob = {
   trim?: { startMs: number; endMs: number };
   overlays?: OverlayItem[];
   audio?: AudioMix;
+  quality?: 'low' | 'medium' | 'high';
 };
 
 export type VideoInfo = {
@@ -53,4 +54,8 @@ export type VideoInfo = {
 export type ThumbnailOptions = {
   width?: number;
   height?: number;
+};
+
+export type ProgressEvent = {
+  progress: number;
 };

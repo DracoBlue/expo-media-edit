@@ -1,126 +1,136 @@
-// Validation tests run in Node (no native module needed).
-// We mock the native module so imports resolve.
+import { editVideo, getVideoInfo, generateThumbnail, addProgressListener, cancelEdit } from '../src/index';
+
+// Mock the native module
 jest.mock('../src/ExpoMediaEditModule', () => ({
   __esModule: true,
   default: {
-    editVideo: jest.fn(),
-    getVideoInfo: jest.fn(),
-    generateThumbnail: jest.fn(),
-    cleanTempFiles: jest.fn(),
+    editVideo: jest.fn().mockResolvedValue('file:///output/video.mp4'),
+    getVideoInfo: jest.fn().mockResolvedValue({ durationMs: 10000, width: 640, height: 360, fps: 30, fileSize: 2000000 }),
+    generateThumbnail: jest.fn().mockResolvedValue('file:///tmp/thumb.jpg'),
+    cleanTempFiles: jest.fn().mockResolvedValue(3),
+    cancelEdit: jest.fn().mockResolvedValue(undefined),
   },
+  emitter: { addListener: jest.fn().mockReturnValue({ remove: jest.fn() }) },
 }));
 
-import { editVideo, getVideoInfo, generateThumbnail } from '../src/index';
-
-describe('editVideo input validation', () => {
-  it('throws when inputUri is missing', async () => {
+describe('editVideo validation', () => {
+  it('throws on missing inputUri', async () => {
     await expect(editVideo({ inputUri: '' })).rejects.toThrow('inputUri');
   });
 
-  it('throws when inputUri is not a string', async () => {
-    // @ts-expect-error — intentional bad input
-    await expect(editVideo({ inputUri: 42 })).rejects.toThrow('inputUri');
+  it('throws on non-string inputUri', async () => {
+    // @ts-expect-error
+    await expect(editVideo({ inputUri: 123 })).rejects.toThrow('inputUri');
   });
 
-  it('throws when trim.startMs >= trim.endMs', async () => {
-    await expect(
-      editVideo({ inputUri: 'file:///video.mp4', trim: { startMs: 5000, endMs: 5000 } })
-    ).rejects.toThrow('trim.startMs must be less than trim.endMs');
+  it('throws on trim startMs >= endMs', async () => {
+    await expect(editVideo({ inputUri: 'file:///v.mp4', trim: { startMs: 5000, endMs: 5000 } }))
+      .rejects.toThrow('trim.startMs must be less than trim.endMs');
   });
 
-  it('throws when trim.startMs > trim.endMs', async () => {
-    await expect(
-      editVideo({ inputUri: 'file:///video.mp4', trim: { startMs: 6000, endMs: 3000 } })
-    ).rejects.toThrow('trim.startMs must be less than trim.endMs');
+  it('throws on negative trimStart', async () => {
+    await expect(editVideo({ inputUri: 'file:///v.mp4', trim: { startMs: -1, endMs: 1000 } }))
+      .rejects.toThrow('startMs must be >= 0');
   });
 
-  it('throws when trim.startMs is negative', async () => {
-    await expect(
-      editVideo({ inputUri: 'file:///video.mp4', trim: { startMs: -1, endMs: 5000 } })
-    ).rejects.toThrow('trim.startMs');
+  it('accepts valid trim', async () => {
+    await expect(editVideo({ inputUri: 'file:///v.mp4', trim: { startMs: 0, endMs: 5000 } }))
+      .resolves.toBe('file:///output/video.mp4');
   });
 
-  it('throws when overlay type is invalid', async () => {
-    await expect(
-      editVideo({
-        inputUri: 'file:///video.mp4',
-        // @ts-expect-error — intentional bad input
-        overlays: [{ type: 'video', x: 0.1, y: 0.1 }],
-      })
-    ).rejects.toThrow("overlays[0].type must be 'text' or 'image'");
+  it('throws on invalid overlay type', async () => {
+    const badOverlay = { type: 'video', x: 0, y: 0 } as any;
+    await expect(editVideo({ inputUri: 'file:///v.mp4', overlays: [badOverlay] }))
+      .rejects.toThrow("type must be 'text' or 'image'");
   });
 
-  it('throws when text overlay has no content', async () => {
-    await expect(
-      editVideo({
-        inputUri: 'file:///video.mp4',
-        // @ts-expect-error — intentional bad input
-        overlays: [{ type: 'text', x: 0.1, y: 0.1 }],
-      })
-    ).rejects.toThrow('content');
+  it('throws on out-of-bounds x', async () => {
+    await expect(editVideo({ inputUri: 'file:///v.mp4', overlays: [{ type: 'text', content: 'Hi', x: 1.5, y: 0 }] }))
+      .rejects.toThrow('x must be a number between 0.0 and 1.0');
   });
 
-  it('throws when image overlay has no uri', async () => {
-    await expect(
-      editVideo({
-        inputUri: 'file:///video.mp4',
-        // @ts-expect-error — intentional bad input
-        overlays: [{ type: 'image', x: 0.1, y: 0.1, width: 0.2, height: 0.2 }],
-      })
-    ).rejects.toThrow('uri');
+  it('throws on missing text content', async () => {
+    await expect(editVideo({ inputUri: 'file:///v.mp4', overlays: [{ type: 'text', content: '', x: 0, y: 0 }] }))
+      .rejects.toThrow('content is required');
   });
 
-  it('throws when image overlay width is out of range', async () => {
-    await expect(
-      editVideo({
-        inputUri: 'file:///video.mp4',
-        overlays: [{ type: 'image', uri: 'file:///img.png', x: 0.1, y: 0.1, width: 1.5, height: 0.2 }],
-      })
-    ).rejects.toThrow('width');
+  it('throws on path traversal in image overlay URI', async () => {
+    await expect(editVideo({ inputUri: 'file:///v.mp4', overlays: [{ type: 'image', uri: 'file:///../../../etc/passwd', x: 0, y: 0, width: 0.2, height: 0.2 }] }))
+      .rejects.toThrow('path traversal');
   });
 
-  it('throws when audio.uri is empty', async () => {
-    await expect(
-      editVideo({ inputUri: 'file:///video.mp4', audio: { uri: '' } })
-    ).rejects.toThrow('audio.uri');
+  it('throws on invalid image overlay URI scheme', async () => {
+    await expect(editVideo({ inputUri: 'file:///v.mp4', overlays: [{ type: 'image', uri: 'ftp://example.com/img.jpg', x: 0, y: 0, width: 0.2, height: 0.2 }] }))
+      .rejects.toThrow('file:// or https://');
   });
 
-  it('passes with minimal valid job', async () => {
-    const mockModule = require('../src/ExpoMediaEditModule').default;
-    mockModule.editVideo.mockResolvedValue('file:///output.mp4');
-    const result = await editVideo({ inputUri: 'file:///video.mp4' });
-    expect(result).toBe('file:///output.mp4');
+  it('throws on invalid audio volume', async () => {
+    await expect(editVideo({ inputUri: 'file:///v.mp4', audio: { uri: 'file:///music.mp3', volume: 3 } }))
+      .rejects.toThrow('audio.volume must be between 0.0 and 2.0');
   });
 
-  it('passes with full valid job', async () => {
-    const mockModule = require('../src/ExpoMediaEditModule').default;
-    mockModule.editVideo.mockResolvedValue('file:///output.mp4');
-    const result = await editVideo({
-      inputUri: 'file:///video.mp4',
-      outputUri: 'file:///out.mp4',
-      trim: { startMs: 0, endMs: 15000 },
-      overlays: [
-        { type: 'text', content: 'Hello', x: 0.1, y: 0.8, fontSize: 40, color: '#FFFFFF' },
-        { type: 'image', uri: 'file:///logo.png', x: 0.7, y: 0.05, width: 0.2, height: 0.1 },
-      ],
-      audio: { uri: 'file:///music.mp3', volume: 0.8, originalVolume: 0.2 },
-    });
-    expect(result).toBe('file:///output.mp4');
+  it('throws on path traversal in audio URI', async () => {
+    await expect(editVideo({ inputUri: 'file:///v.mp4', audio: { uri: 'file:///../etc/music.mp3' } }))
+      .rejects.toThrow('path traversal');
+  });
+
+  it('throws on invalid quality', async () => {
+    await expect(editVideo({ inputUri: 'file:///v.mp4', quality: 'ultra' as any }))
+      .rejects.toThrow("quality must be 'low', 'medium', or 'high'");
+  });
+
+  it('accepts quality low/medium/high', async () => {
+    for (const q of ['low', 'medium', 'high'] as const) {
+      await expect(editVideo({ inputUri: 'file:///v.mp4', quality: q })).resolves.toBeTruthy();
+    }
+  });
+
+  it('accepts valid text overlay with timing', async () => {
+    await expect(editVideo({
+      inputUri: 'file:///v.mp4',
+      overlays: [{ type: 'text', content: 'Hello', x: 0.1, y: 0.9, startMs: 0, endMs: 3000 }],
+    })).resolves.toBeTruthy();
+  });
+
+  it('throws when overlay startMs >= endMs', async () => {
+    await expect(editVideo({
+      inputUri: 'file:///v.mp4',
+      overlays: [{ type: 'text', content: 'Hi', x: 0, y: 0, startMs: 3000, endMs: 1000 }],
+    })).rejects.toThrow('startMs must be less than endMs');
   });
 });
 
-describe('getVideoInfo input validation', () => {
-  it('throws when uri is empty', async () => {
-    await expect(getVideoInfo('')).rejects.toThrow('uri');
+describe('addProgressListener', () => {
+  it('returns a subscription with remove()', () => {
+    const sub = addProgressListener(() => {});
+    expect(typeof sub.remove).toBe('function');
+    sub.remove();
   });
 });
 
-describe('generateThumbnail input validation', () => {
-  it('throws when uri is empty', async () => {
-    await expect(generateThumbnail('', 0)).rejects.toThrow('uri');
+describe('cancelEdit', () => {
+  it('resolves without error', async () => {
+    await expect(cancelEdit()).resolves.toBeUndefined();
+  });
+});
+
+describe('getVideoInfo', () => {
+  it('throws on empty URI', async () => {
+    await expect(getVideoInfo('')).rejects.toThrow('uri is required');
   });
 
-  it('throws when timeMs is negative', async () => {
-    await expect(generateThumbnail('file:///video.mp4', -1)).rejects.toThrow('timeMs');
+  it('resolves with video metadata', async () => {
+    const info = await getVideoInfo('file:///v.mp4');
+    expect(info).toMatchObject({ durationMs: expect.any(Number), width: expect.any(Number) });
+  });
+});
+
+describe('generateThumbnail', () => {
+  it('throws on negative timeMs', async () => {
+    await expect(generateThumbnail('file:///v.mp4', -1)).rejects.toThrow('timeMs must be a non-negative number');
+  });
+
+  it('resolves with URI', async () => {
+    await expect(generateThumbnail('file:///v.mp4', 0)).resolves.toBe('file:///tmp/thumb.jpg');
   });
 });

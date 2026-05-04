@@ -1,6 +1,6 @@
-import { requireNativeModule } from 'expo-modules-core';
+import { EventEmitter, requireNativeModule } from 'expo-modules-core';
 
-// This call loads the native module object from the JSI.
-const ExpoMediaEditModule = requireNativeModule('ExpoMediaEdit');
+const ExpoMediaEditNativeModule = requireNativeModule('ExpoMediaEdit');
+export const emitter = new EventEmitter(ExpoMediaEditNativeModule);
 
-export default ExpoMediaEditModule;
+export default ExpoMediaEditNativeModule;

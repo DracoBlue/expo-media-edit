@@ -47,9 +47,11 @@ public struct EditJobOptions {
   let trim: TrimOptions?
   let overlays: [OverlayOptions]
   let audio: AudioMixOptions?
+  let quality: String
 
   init(dict: [String: Any]) {
     outputUri = dict["outputUri"] as? String
+    quality = dict["quality"] as? String ?? "high"
 
     if let trimDict = dict["trim"] as? [String: Any],
        let startMs = trimDict["startMs"] as? Double,
@@ -64,11 +66,10 @@ public struct EditJobOptions {
       for o in overlayList {
         guard let type = o["type"] as? String else { continue }
         if type == "text", let content = o["content"] as? String {
-          let x = o["x"] as? Double ?? 0
-          let y = o["y"] as? Double ?? 0
           parsedOverlays.append(.text(TextOverlayOptions(
             content: content,
-            x: x, y: y,
+            x: o["x"] as? Double ?? 0,
+            y: o["y"] as? Double ?? 0,
             fontSize: o["fontSize"] as? Double ?? 32,
             color: o["color"] as? String ?? "#FFFFFF",
             fontWeight: o["fontWeight"] as? String ?? "normal",
@@ -77,11 +78,11 @@ public struct EditJobOptions {
             endMs: o["endMs"] as? Double
           )))
         } else if type == "image", let uri = o["uri"] as? String {
-          let x = o["x"] as? Double ?? 0
-          let y = o["y"] as? Double ?? 0
+          guard !uri.contains("../"), uri.hasPrefix("file://") || uri.hasPrefix("https://") else { continue }
           parsedOverlays.append(.image(ImageOverlayOptions(
             uri: uri,
-            x: x, y: y,
+            x: o["x"] as? Double ?? 0,
+            y: o["y"] as? Double ?? 0,
             width: o["width"] as? Double ?? 0.2,
             height: o["height"] as? Double ?? 0.2,
             opacity: o["opacity"] as? Double ?? 1.0,
@@ -94,6 +95,7 @@ public struct EditJobOptions {
     overlays = parsedOverlays
 
     if let audioDict = dict["audio"] as? [String: Any], let uri = audioDict["uri"] as? String {
+      guard !uri.contains("../") else { audio = nil; return }
       audio = AudioMixOptions(
         uri: uri,
         volume: audioDict["volume"] as? Double ?? 1.0,
@@ -118,7 +120,7 @@ enum MediaEditError: Error {
     inputURL: URL,
     outputURL: URL,
     job: EditJobOptions,
-    progress: @escaping (Float) -> Void,
+    onSessionReady: @escaping (AVAssetExportSession) -> Void,
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
     let asset = AVAsset(url: inputURL)
@@ -133,7 +135,6 @@ enum MediaEditError: Error {
       timeRange = CMTimeRange(start: .zero, duration: asset.duration)
     }
 
-    // Add video track
     guard let srcVideoTrack = asset.tracks(withMediaType: .video).first,
           let compVideoTrack = composition.addMutableTrack(
             withMediaType: .video,
@@ -151,7 +152,6 @@ enum MediaEditError: Error {
       return
     }
 
-    // Add original audio track
     var compAudioTrack: AVMutableCompositionTrack?
     if let srcAudioTrack = asset.tracks(withMediaType: .audio).first {
       compAudioTrack = composition.addMutableTrack(
@@ -161,14 +161,12 @@ enum MediaEditError: Error {
       try? compAudioTrack?.insertTimeRange(timeRange, of: srcAudioTrack, at: .zero)
     }
 
-    // Build video composition with overlays
     let videoComposition = OverlayCompositor.buildVideoComposition(
       composition: composition,
       videoTrack: compVideoTrack,
       overlays: job.overlays
     )
 
-    // Build audio mix
     let audioMix = AudioMixer.buildAudioMix(
       composition: composition,
       originalTrack: compAudioTrack,
@@ -180,7 +178,8 @@ enum MediaEditError: Error {
       videoComposition: videoComposition,
       audioMix: audioMix,
       outputURL: outputURL,
-      progress: progress,
+      quality: job.quality,
+      onSessionReady: onSessionReady,
       completion: completion
     )
   }
@@ -190,13 +189,18 @@ enum MediaEditError: Error {
     videoComposition: AVMutableVideoComposition?,
     audioMix: AVAudioMix?,
     outputURL: URL,
-    progress: @escaping (Float) -> Void,
+    quality: String,
+    onSessionReady: @escaping (AVAssetExportSession) -> Void,
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
-    guard let exportSession = AVAssetExportSession(
-      asset: composition,
-      presetName: AVAssetExportPresetHighestQuality
-    ) else {
+    let preset: String
+    switch quality {
+    case "low":    preset = AVAssetExportPresetLowQuality
+    case "medium": preset = AVAssetExportPresetMediumQuality
+    default:       preset = AVAssetExportPresetHighestQuality
+    }
+
+    guard let exportSession = AVAssetExportSession(asset: composition, presetName: preset) else {
       completion(.failure(MediaEditError.exportFailed("Could not create export session")))
       return
     }
@@ -205,22 +209,23 @@ enum MediaEditError: Error {
 
     exportSession.outputURL = outputURL
     exportSession.outputFileType = .mp4
-    if let vc = videoComposition {
-      exportSession.videoComposition = vc
-    }
-    if let am = audioMix {
-      exportSession.audioMix = am
-    }
+    if let vc = videoComposition { exportSession.videoComposition = vc }
+    if let am = audioMix { exportSession.audioMix = am }
+
+    onSessionReady(exportSession)
 
     exportSession.exportAsynchronously {
       switch exportSession.status {
       case .completed:
         completion(.success(outputURL))
-      case .failed:
-        completion(.failure(exportSession.error ?? MediaEditError.exportFailed("Unknown export error")))
       case .cancelled:
+        try? FileManager.default.removeItem(at: outputURL)
         completion(.failure(MediaEditError.exportFailed("Export cancelled")))
+      case .failed:
+        try? FileManager.default.removeItem(at: outputURL)
+        completion(.failure(exportSession.error ?? MediaEditError.exportFailed("Unknown export error")))
       default:
+        try? FileManager.default.removeItem(at: outputURL)
         completion(.failure(MediaEditError.exportFailed("Unexpected export status")))
       }
     }
