@@ -7,8 +7,18 @@
   "scripts": {
     "build": "tsc",
     "test": "jest",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "prepublishOnly": "npm run build && npm test"
   },
+  "files": [
+    "build",
+    "ios",
+    "android",
+    "expo-module.config.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "keywords": [
     "expo",
     "expo-module",

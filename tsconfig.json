@@ -1,8 +1,16 @@
 {
-  "extends": "expo-modules-core/tsconfig.base",
   "compilerOptions": {
     "strict": true,
-    "outDir": "build"
+    "outDir": "build",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "target": "ES2019",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "lib": ["ES2019"]
   },
   "include": ["src"]
 }
