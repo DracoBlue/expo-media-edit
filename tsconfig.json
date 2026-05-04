@@ -1,0 +1,8 @@
+{
+  "extends": "expo-modules-core/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "outDir": "build"
+  },
+  "include": ["src"]
+}
