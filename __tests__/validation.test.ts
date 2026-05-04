@@ -1,6 +1,7 @@
 // Validation tests run in Node (no native module needed).
 // We mock the native module so imports resolve.
 jest.mock('../src/ExpoMediaEditModule', () => ({
+  __esModule: true,
   default: {
     editVideo: jest.fn(),
     getVideoInfo: jest.fn(),
