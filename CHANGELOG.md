@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-05-05
+
+### Added
+- **Text overlay rotation** — `rotation?: number` (degrees) on `TextOverlay`. iOS wraps `CATextLayer` in a container `CALayer` and applies `CATransform3DMakeRotation`. Android uses `canvas.save()` / `canvas.rotate()` / `canvas.restore()` around the text draw call. Default: 0 (no rotation).
+
 ## [0.2.0] - 2026-05-04
 
 ### Added

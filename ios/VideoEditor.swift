@@ -14,6 +14,7 @@ public struct TextOverlayOptions {
   let color: String
   let fontWeight: String
   let backgroundColor: String?
+  let rotation: Double  // degrees, default 0
   let startMs: Double?
   let endMs: Double?
 }
@@ -74,6 +75,7 @@ public struct EditJobOptions {
             color: o["color"] as? String ?? "#FFFFFF",
             fontWeight: o["fontWeight"] as? String ?? "normal",
             backgroundColor: o["backgroundColor"] as? String,
+            rotation: o["rotation"] as? Double ?? 0,
             startMs: o["startMs"] as? Double,
             endMs: o["endMs"] as? Double
           )))

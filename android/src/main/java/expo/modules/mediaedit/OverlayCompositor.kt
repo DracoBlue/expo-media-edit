@@ -276,6 +276,8 @@ class OverlayCompositor(private val context: Context) {
           }
           val x = opts.x * videoWidth
           val y = opts.y * videoHeight
+          if (opts.rotation != 0f) canvas.save()
+          if (opts.rotation != 0f) canvas.rotate(opts.rotation, x, y)
           opts.backgroundColor?.let { bgColorStr ->
             val bgPaint = Paint().apply {
               try { color = Color.parseColor(bgColorStr) } catch (_: Exception) { color = Color.TRANSPARENT }
@@ -286,6 +288,7 @@ class OverlayCompositor(private val context: Context) {
             canvas.drawRect(x - pad, y - bounds.height() - pad, x + bounds.width() + pad, y + pad, bgPaint)
           }
           canvas.drawText(opts.content, x, y, textPaint)
+          if (opts.rotation != 0f) canvas.restore()
         }
         is OverlayItem.Image -> {
           val opts = overlay.opts

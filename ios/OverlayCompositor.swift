@@ -81,6 +81,18 @@ public class OverlayCompositor {
 
     applyTimingAnimation(to: textLayer, startMs: opts.startMs, endMs: opts.endMs, duration: duration)
 
+    // Wrap in a container so rotation is applied around the text center
+    if opts.rotation != 0 {
+      let radians = CGFloat(opts.rotation) * .pi / 180
+      let container = CALayer()
+      container.frame = textLayer.frame
+      textLayer.frame = CGRect(origin: .zero, size: textLayer.frame.size)
+      container.addSublayer(textLayer)
+      container.transform = CATransform3DMakeRotation(radians, 0, 0, 1)
+      applyTimingAnimation(to: container, startMs: opts.startMs, endMs: opts.endMs, duration: duration)
+      return container
+    }
+
     return textLayer
   }
 

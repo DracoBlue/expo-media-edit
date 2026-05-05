@@ -10,6 +10,7 @@ data class TextOverlayItem(
   val color: String,
   val fontWeight: String,
   val backgroundColor: String?,
+  val rotation: Float,  // degrees, default 0
   val startMs: Long?,
   val endMs: Long?
 )
@@ -71,6 +72,7 @@ data class EditJob(
               color = o["color"] as? String ?: "#FFFFFF",
               fontWeight = o["fontWeight"] as? String ?: "normal",
               backgroundColor = o["backgroundColor"] as? String,
+              rotation = (o["rotation"] as? Number)?.toFloat() ?: 0f,
               startMs = (o["startMs"] as? Number)?.toLong(),
               endMs = (o["endMs"] as? Number)?.toLong()
             )))

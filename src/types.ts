@@ -7,6 +7,7 @@ export type TextOverlay = {
   color?: string;
   fontWeight?: 'normal' | 'bold';
   backgroundColor?: string;
+  rotation?: number;  // degrees, default 0
   startMs?: number;
   endMs?: number;
 };
