@@ -283,6 +283,21 @@ enum MediaEditError: Error {
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
     DispatchQueue.global(qos: .userInitiated).async {
+      // Pre-compute render size from first video item so image items are scaled to match
+      var preRenderSize = CGSize(width: 1080, height: 1920)
+      for item in playlist {
+        if case .video(let v) = item, let url = URL(string: v.uri) {
+          let asset = AVAsset(url: url)
+          if let track = asset.tracks(withMediaType: .video).first {
+            let nat = track.naturalSize.applying(track.preferredTransform)
+            if abs(nat.width) > 0 && abs(nat.height) > 0 {
+              preRenderSize = CGSize(width: abs(nat.width), height: abs(nat.height))
+            }
+          }
+          break
+        }
+      }
+
       // Step 1: Resolve all items to AVAsset + duration
       struct Resolved {
         let asset: AVAsset
@@ -319,7 +334,7 @@ enum MediaEditError: Error {
             completion(.failure(MediaEditError.trackError)); return
           }
           let dur = CMTime(value: CMTimeValue(img.durationMs), timescale: 1000)
-          guard let (tempAsset, tempURL) = self.imageToAsset(image: image, duration: dur) else {
+          guard let (tempAsset, tempURL) = self.imageToAsset(image: image, duration: dur, targetSize: preRenderSize) else {
             completion(.failure(MediaEditError.compositionError)); return
           }
           resolved.append(Resolved(asset: tempAsset, assetRange: CMTimeRange(start: .zero, duration: dur),
@@ -521,12 +536,28 @@ enum MediaEditError: Error {
 
   // MARK: Image → temp AVAsset
 
-  private func imageToAsset(image: UIImage, duration: CMTime) -> (AVAsset, URL)? {
-    let pixelSize = CGSize(
-      width: image.size.width * image.scale,
-      height: image.size.height * image.scale
-    )
-    guard pixelSize.width > 0, pixelSize.height > 0 else { return nil }
+  private func imageToAsset(image: UIImage, duration: CMTime, targetSize: CGSize) -> (AVAsset, URL)? {
+    guard targetSize.width > 0, targetSize.height > 0 else { return nil }
+
+    // Scale image to fit targetSize (aspect-fit, centered on black)
+    let imgW = image.size.width * image.scale
+    let imgH = image.size.height * image.scale
+    let fitScale = min(targetSize.width / imgW, targetSize.height / imgH)
+    let drawW = imgW * fitScale
+    let drawH = imgH * fitScale
+    let drawX = (targetSize.width - drawW) / 2
+    let drawY = (targetSize.height - drawH) / 2
+
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1.0  // targetSize is already in physical pixels
+    let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+    let scaledImage = renderer.image { ctx in
+      UIColor.black.setFill()
+      ctx.fill(CGRect(origin: .zero, size: targetSize))
+      image.draw(in: CGRect(x: drawX, y: drawY, width: drawW, height: drawH))
+    }
+
+    let pixelSize = targetSize
 
     let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("expo-media-edit")
     try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -544,7 +575,7 @@ enum MediaEditError: Error {
     writer.startWriting()
     writer.startSession(atSourceTime: .zero)
 
-    guard let pixelBuffer = image.cvPixelBuffer(size: pixelSize) else { return nil }
+    guard let pixelBuffer = scaledImage.cvPixelBuffer(size: pixelSize) else { return nil }
 
     // Write a frame every second for the whole duration
     let durationSec = CMTimeGetSeconds(duration)

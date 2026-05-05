@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] - 2026-05-05
+
+### Fixed
+- **iOS image scaling in playlist** — `imageToAsset` now scales the image to fit the video's render size (aspect-fit, centered on black) before creating the pixel buffer. Previously the image was encoded at its full physical pixel dimensions (e.g. 2160×3840 on a 2× device), causing it to appear at 200% size in the rendered video when the render target was 1080×1920. The render size is pre-computed from the first video item in the playlist before any images are processed.
+
 ## [0.5.0] - 2026-05-05
 
 ### Added
