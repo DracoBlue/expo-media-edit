@@ -17,10 +17,9 @@ class ExpoMediaEditModule : Module() {
 
     Events("onProgress")
 
-    AsyncFunction("editVideo") { inputUri: String, jobMap: Map<String, Any?>, promise: Promise ->
+    AsyncFunction("editVideo") { jobMap: Map<String, Any?>, promise: Promise ->
       val ctx = requireNotNull(appContext.reactContext) { "React context not available" }
       val job = EditJob.fromMap(jobMap)
-      val parsedInputUri = Uri.parse(inputUri)
       cancelRequested = false
 
       val outputFile = if (job.outputUri != null) {
@@ -31,30 +30,58 @@ class ExpoMediaEditModule : Module() {
         createTempFile(ctx, "output", ".mp4")
       }
 
-      Thread {
-        VideoEditor(ctx).edit(
-          inputUri = parsedInputUri,
-          outputFile = outputFile,
-          job = job,
-          progressCallback = { progress ->
-            val bundle = Bundle().apply { putDouble("progress", progress.toDouble()) }
-            sendEvent("onProgress", bundle)
-          },
-          cancelCheck = { cancelRequested },
-          completion = { result ->
-            cancelRequested = false
-            result.fold(
-              onSuccess = { uri -> promise.resolve(uri.toString()) },
-              onFailure = { e ->
-                if (e is CancellationException) {
-                  promise.reject("CANCELLED", "Edit was cancelled", e)
-                } else {
-                  promise.reject("EDIT_FAILED", e.message ?: "Unknown error", e)
-                }
-              }
-            )
+      val progressCallback: (Float) -> Unit = { progress ->
+        val bundle = Bundle().apply { putDouble("progress", progress.toDouble()) }
+        sendEvent("onProgress", bundle)
+      }
+      val completion: (Result<Uri>) -> Unit = { result ->
+        cancelRequested = false
+        result.fold(
+          onSuccess = { uri -> promise.resolve(uri.toString()) },
+          onFailure = { e ->
+            if (e is CancellationException) {
+              promise.reject("CANCELLED", "Edit was cancelled", e)
+            } else {
+              promise.reject("EDIT_FAILED", e.message ?: "Unknown error", e)
+            }
           }
         )
+      }
+
+      Thread {
+        val playlist = job.playlist
+        if (playlist != null && (playlist.size > 1 || playlist.firstOrNull() is PlaylistItemConfig.ImageItem)) {
+          PlaylistCompositor(ctx).composite(
+            playlist = playlist,
+            overlays = job.overlays,
+            audio = job.audio,
+            quality = job.quality,
+            outputFile = outputFile,
+            progressCallback = progressCallback,
+            cancelCheck = { cancelRequested },
+            completion = completion
+          )
+        } else {
+          // Single-video fast path
+          val firstItem = playlist?.firstOrNull() as? PlaylistItemConfig.VideoItem
+          val inputUri = Uri.parse(firstItem?.uri ?: return@Thread)
+          val singleJob = EditJob(
+            outputUri = job.outputUri,
+            trim = firstItem.trim,
+            overlays = job.overlays,
+            audio = job.audio,
+            quality = job.quality,
+            playlist = null
+          )
+          VideoEditor(ctx).edit(
+            inputUri = inputUri,
+            outputFile = outputFile,
+            job = singleJob,
+            progressCallback = progressCallback,
+            cancelCheck = { cancelRequested },
+            completion = completion
+          )
+        }
       }.start()
     }
 

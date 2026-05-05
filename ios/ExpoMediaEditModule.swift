@@ -10,12 +10,7 @@ public class ExpoMediaEditModule: Module {
 
     Events("onProgress")
 
-    AsyncFunction("editVideo") { (inputUri: String, jobDict: [String: Any], promise: Promise) in
-      guard let inputURL = URL(string: inputUri) else {
-        promise.reject("INVALID_URI", "inputUri is not a valid URL")
-        return
-      }
-
+    AsyncFunction("editVideo") { (jobDict: [String: Any], promise: Promise) in
       let outputURL: URL
       if let outputUriStr = jobDict["outputUri"] as? String, let url = URL(string: outputUriStr) {
         outputURL = url
@@ -26,39 +21,69 @@ public class ExpoMediaEditModule: Module {
       }
 
       let job = EditJobOptions(dict: jobDict)
-      VideoEditor().edit(
-        inputURL: inputURL,
-        outputURL: outputURL,
-        job: job,
-        onSessionReady: { [weak self] session in
-          self?.activeExportSession = session
-          DispatchQueue.main.async {
-            self?.progressTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
-              guard let s = self?.activeExportSession else { return }
-              self?.sendEvent("onProgress", ["progress": s.progress])
-            }
+
+      let onProgress: (Float) -> Void = { [weak self] p in
+        self?.sendEvent("onProgress", ["progress": p])
+      }
+      let onSessionReady: (AVAssetExportSession) -> Void = { [weak self] session in
+        self?.activeExportSession = session
+        DispatchQueue.main.async {
+          self?.progressTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            guard let s = self?.activeExportSession else { return }
+            self?.sendEvent("onProgress", ["progress": s.progress])
           }
-        },
-        completion: { [weak self] result in
-          DispatchQueue.main.async {
-            self?.progressTimer?.invalidate()
-            self?.progressTimer = nil
-            self?.activeExportSession = nil
-          }
-          switch result {
-          case .success(let url):
-            self?.sendEvent("onProgress", ["progress": 1.0])
-            promise.resolve(url.absoluteString)
-          case .failure(let error):
-            if (error as NSError).domain == AVFoundationErrorDomain &&
-               (error as NSError).code == AVError.exportFailed.rawValue {
+        }
+      }
+      let completion: (Result<URL, Error>) -> Void = { [weak self] result in
+        DispatchQueue.main.async {
+          self?.progressTimer?.invalidate()
+          self?.progressTimer = nil
+          self?.activeExportSession = nil
+        }
+        switch result {
+        case .success(let url):
+          self?.sendEvent("onProgress", ["progress": 1.0])
+          promise.resolve(url.absoluteString)
+        case .failure(let error):
+          if (error as NSError).domain == AVFoundationErrorDomain &&
+             (error as NSError).code == AVError.exportFailed.rawValue {
+            promise.reject("CANCELLED", "Export was cancelled")
+          } else {
+            let msg = error.localizedDescription
+            if msg.contains("CANCELLED") || msg.contains("cancelled") {
               promise.reject("CANCELLED", "Export was cancelled")
             } else {
-              promise.reject("EDIT_FAILED", error.localizedDescription)
+              promise.reject("EDIT_FAILED", msg)
             }
           }
         }
-      )
+      }
+
+      if let playlist = job.playlist, playlist.count > 1 || playlist.first?.isImage == true {
+        VideoEditor().editPlaylist(
+          playlist: playlist,
+          outputURL: outputURL,
+          job: job,
+          onProgress: onProgress,
+          onSessionReady: onSessionReady,
+          completion: completion
+        )
+      } else {
+        // Single-video fast path
+        guard let firstItem = job.playlist?.first, case .video(let v) = firstItem,
+              let inputURL = URL(string: v.uri) else {
+          promise.reject("INVALID_INPUT", "No valid video item in playlist")
+          return
+        }
+        let singleJob = EditJobOptions(inputURL: inputURL, trim: v.trim, overlays: job.overlays, audio: job.audio, quality: job.quality)
+        VideoEditor().edit(
+          inputURL: inputURL,
+          outputURL: outputURL,
+          job: singleJob,
+          onSessionReady: onSessionReady,
+          completion: completion
+        )
+      }
     }
 
     AsyncFunction("cancelEdit") { (promise: Promise) in

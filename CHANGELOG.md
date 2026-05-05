@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-05-05
+
+### Added
+- **Playlist API** — `EditJob.playlist?: PlaylistItem[]` accepts a mix of video and image items. JS normalises legacy `inputUri` to a single-item playlist automatically. Native routes to the fast single-video path unless the playlist has more than one item or starts with an image.
+- **`PlaylistItem` type** — `{ type: 'video'; uri; trim?; transition? }` or `{ type: 'image'; uri; durationMs; transition? }`.
+- **`Transition` type** — `{ type: 'cut' }`, `{ type: 'fade'; durationMs }`, `{ type: 'fadeToBlack'; durationMs }`.
+- **iOS playlist compositor** — `VideoEditor.editPlaylist()` builds an `AVMutableComposition` with two alternating tracks. Fade uses `setOpacityRamp` on layer instructions; FadeToBlack blacks out and restores opacity per-item. Images are converted to single-frame MP4 via `AVAssetWriter` before composition.
+- **Android playlist compositor** — `PlaylistCompositor` decodes each item frame-by-frame and blends with `Paint.alpha` for cross-fade and fade-to-black transitions.
+- **`Transition`, `PlaylistItem` re-exported** from package entry point.
+
+### Changed
+- `editVideo(jobDict)` native signature changed on both iOS and Android from `(inputUri, jobDict)` to `(jobDict)`. Playlist is always passed; `inputUri` is no longer a separate parameter at the native layer.
+
 ## [0.3.1] - 2026-05-05
 
 ### Fixed

@@ -266,7 +266,7 @@ class OverlayCompositor(private val context: Context) {
     return yuv
   }
 
-  private fun drawOverlays(canvas: Canvas, overlays: List<OverlayItem>, frameTimeMs: Long, videoWidth: Int, videoHeight: Int) {
+  internal fun drawOverlays(canvas: Canvas, overlays: List<OverlayItem>, frameTimeMs: Long, videoWidth: Int, videoHeight: Int) {
     for (overlay in overlays) {
       when (overlay) {
         is OverlayItem.Text -> {

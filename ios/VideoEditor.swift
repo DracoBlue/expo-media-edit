@@ -1,6 +1,8 @@
 import AVFoundation
 import UIKit
 
+// MARK: - Common option structs
+
 public struct TrimOptions {
   let startMs: Double
   let endMs: Double
@@ -14,7 +16,7 @@ public struct TextOverlayOptions {
   let color: String
   let fontWeight: String
   let backgroundColor: String?
-  let rotation: Double  // degrees, default 0
+  let rotation: Double
   let startMs: Double?
   let endMs: Double?
 }
@@ -43,12 +45,52 @@ public struct AudioMixOptions {
   let trimToVideo: Bool
 }
 
+// MARK: - Playlist types (0.4.0)
+
+public enum TransitionOptions {
+  case cut
+  case fade(durationMs: Double)
+  case fadeToBlack(durationMs: Double)
+}
+
+public struct PlaylistVideoOptions {
+  let uri: String
+  let trim: TrimOptions?
+  let transition: TransitionOptions
+}
+
+public struct PlaylistImageOptions {
+  let uri: String
+  let durationMs: Double
+  let transition: TransitionOptions
+}
+
+public enum PlaylistItemOptions {
+  case video(PlaylistVideoOptions)
+  case image(PlaylistImageOptions)
+
+  var isImage: Bool { if case .image = self { return true }; return false }
+}
+
+// MARK: - EditJobOptions
+
 public struct EditJobOptions {
   let outputUri: String?
   let trim: TrimOptions?
   let overlays: [OverlayOptions]
   let audio: AudioMixOptions?
   let quality: String
+  let playlist: [PlaylistItemOptions]?
+
+  // Convenience init for single-video fast path
+  init(inputURL: URL, trim: TrimOptions?, overlays: [OverlayOptions], audio: AudioMixOptions?, quality: String) {
+    self.outputUri = nil
+    self.trim = trim
+    self.overlays = overlays
+    self.audio = audio
+    self.quality = quality
+    self.playlist = [.video(PlaylistVideoOptions(uri: inputURL.absoluteString, trim: trim, transition: .cut))]
+  }
 
   init(dict: [String: Any]) {
     outputUri = dict["outputUri"] as? String
@@ -97,7 +139,7 @@ public struct EditJobOptions {
     overlays = parsedOverlays
 
     if let audioDict = dict["audio"] as? [String: Any], let uri = audioDict["uri"] as? String {
-      guard !uri.contains("../") else { audio = nil; return }
+      guard !uri.contains("../") else { audio = nil; playlist = nil; return }
       audio = AudioMixOptions(
         uri: uri,
         volume: audioDict["volume"] as? Double ?? 1.0,
@@ -108,8 +150,46 @@ public struct EditJobOptions {
     } else {
       audio = nil
     }
+
+    if let playlistArr = dict["playlist"] as? [[String: Any]] {
+      var items: [PlaylistItemOptions] = []
+      for (i, p) in playlistArr.enumerated() {
+        guard let type = p["type"] as? String, let uri = p["uri"] as? String,
+              !uri.contains("../"),
+              uri.hasPrefix("file://") || uri.hasPrefix("https://") else { continue }
+        let transition = EditJobOptions.parseTransition(p["transition"] as? [String: Any], isFirst: i == 0)
+        if type == "video" {
+          let t: TrimOptions?
+          if let td = p["trim"] as? [String: Any],
+             let s = td["startMs"] as? Double, let e = td["endMs"] as? Double {
+            t = TrimOptions(startMs: s, endMs: e)
+          } else { t = nil }
+          items.append(.video(PlaylistVideoOptions(uri: uri, trim: t, transition: transition)))
+        } else if type == "image" {
+          items.append(.image(PlaylistImageOptions(
+            uri: uri,
+            durationMs: p["durationMs"] as? Double ?? 3000,
+            transition: transition
+          )))
+        }
+      }
+      playlist = items.isEmpty ? nil : items
+    } else {
+      playlist = nil
+    }
+  }
+
+  private static func parseTransition(_ dict: [String: Any]?, isFirst: Bool) -> TransitionOptions {
+    guard !isFirst, let d = dict else { return .cut }
+    switch d["type"] as? String {
+    case "fade":      return .fade(durationMs: d["durationMs"] as? Double ?? 500)
+    case "fadeToBlack": return .fadeToBlack(durationMs: d["durationMs"] as? Double ?? 500)
+    default:          return .cut
+    }
   }
 }
+
+// MARK: - Errors
 
 enum MediaEditError: Error {
   case trackError
@@ -117,7 +197,12 @@ enum MediaEditError: Error {
   case compositionError
 }
 
+// MARK: - VideoEditor
+
 @objc public class VideoEditor: NSObject {
+
+  // MARK: Single-video (original path)
+
   public func edit(
     inputURL: URL,
     outputURL: URL,
@@ -168,7 +253,6 @@ enum MediaEditError: Error {
       videoTrack: compVideoTrack,
       overlays: job.overlays
     )
-
     let audioMix = AudioMixer.buildAudioMix(
       composition: composition,
       originalTrack: compAudioTrack,
@@ -185,6 +269,239 @@ enum MediaEditError: Error {
       completion: completion
     )
   }
+
+  // MARK: Playlist path (0.4.0)
+
+  public func editPlaylist(
+    playlist: [PlaylistItemOptions],
+    outputURL: URL,
+    job: EditJobOptions,
+    onProgress: @escaping (Float) -> Void,
+    onSessionReady: @escaping (AVAssetExportSession) -> Void,
+    completion: @escaping (Result<URL, Error>) -> Void
+  ) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      // Step 1: Resolve all items to AVAsset + duration
+      struct Resolved {
+        let asset: AVAsset
+        let assetRange: CMTimeRange
+        let duration: CMTime
+        let transition: TransitionOptions
+        var tempURL: URL? // for cleanup
+      }
+
+      var resolved: [Resolved] = []
+      for (i, item) in playlist.enumerated() {
+        let progress = Float(i) / Float(playlist.count) * 0.2
+        onProgress(progress)
+
+        switch item {
+        case .video(let v):
+          guard let url = URL(string: v.uri) else { completion(.failure(MediaEditError.trackError)); return }
+          let asset = AVAsset(url: url)
+          let assetDur = asset.duration
+          let range: CMTimeRange
+          if let t = v.trim {
+            let s = CMTime(value: CMTimeValue(t.startMs), timescale: 1000)
+            let e = CMTime(value: CMTimeValue(t.endMs), timescale: 1000)
+            range = CMTimeRange(start: s, end: CMTimeMinimum(e, assetDur))
+          } else {
+            range = CMTimeRange(start: .zero, duration: assetDur)
+          }
+          resolved.append(Resolved(asset: asset, assetRange: range, duration: range.duration,
+                                   transition: v.transition, tempURL: nil))
+
+        case .image(let img):
+          guard let url = URL(string: img.uri),
+                let image = UIImage(contentsOfFile: url.path) else {
+            completion(.failure(MediaEditError.trackError)); return
+          }
+          let dur = CMTime(value: CMTimeValue(img.durationMs), timescale: 1000)
+          guard let (tempAsset, tempURL) = self.imageToAsset(image: image, duration: dur) else {
+            completion(.failure(MediaEditError.compositionError)); return
+          }
+          resolved.append(Resolved(asset: tempAsset, assetRange: CMTimeRange(start: .zero, duration: dur),
+                                   duration: dur, transition: img.transition, tempURL: tempURL))
+        }
+      }
+
+      onProgress(0.2)
+
+      // Step 2: Build AVMutableComposition with transitions
+      let composition = AVMutableComposition()
+      guard let track1 = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+            let track2 = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+        completion(.failure(MediaEditError.compositionError)); return
+      }
+
+      var instructions: [AVMutableVideoCompositionInstruction] = []
+      var currentTime = CMTime.zero
+      var renderSize = CGSize(width: 1920, height: 1080)
+
+      for (i, item) in resolved.enumerated() {
+        guard let srcTrack = item.asset.tracks(withMediaType: .video).first else { continue }
+        if i == 0 {
+          let nat = srcTrack.naturalSize.applying(srcTrack.preferredTransform)
+          renderSize = CGSize(width: abs(nat.width), height: abs(nat.height))
+        }
+
+        let currTrack = i % 2 == 0 ? track1 : track2
+        let prevTrack = i % 2 == 0 ? track2 : track1
+
+        switch item.transition {
+        case .cut:
+          do { try currTrack.insertTimeRange(item.assetRange, of: srcTrack, at: currentTime) } catch { completion(.failure(error)); return }
+          let inst = AVMutableVideoCompositionInstruction()
+          inst.timeRange = CMTimeRange(start: currentTime, duration: item.duration)
+          let li = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
+          li.setTransform(srcTrack.preferredTransform, at: .zero)
+          inst.layerInstructions = [li]
+          instructions.append(inst)
+          currentTime = currentTime + item.duration
+
+        case .fade(let durationMs):
+          let transMs = min(durationMs, CMTimeGetSeconds(item.duration) * 1000)
+          let transDur = CMTime(value: CMTimeValue(transMs), timescale: 1000)
+          let insertAt = currentTime - transDur
+          do { try currTrack.insertTimeRange(item.assetRange, of: srcTrack, at: insertAt) } catch { completion(.failure(error)); return }
+
+          // Truncate previous instruction to end at insertAt
+          if let prev = instructions.last {
+            prev.timeRange = CMTimeRange(start: prev.timeRange.start, end: insertAt)
+          }
+
+          // Overlap instruction: cross-dissolve
+          let overlapRange = CMTimeRange(start: insertAt, end: currentTime)
+          let overlapInst = AVMutableVideoCompositionInstruction()
+          overlapInst.timeRange = overlapRange
+          let prevLI = AVMutableVideoCompositionLayerInstruction(assetTrack: prevTrack)
+          prevLI.setOpacityRamp(fromStartOpacity: 1.0, toEndOpacity: 0.0, timeRange: overlapRange)
+          let currLI = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
+          currLI.setOpacityRamp(fromStartOpacity: 0.0, toEndOpacity: 1.0, timeRange: overlapRange)
+          overlapInst.layerInstructions = [currLI, prevLI]
+          instructions.append(overlapInst)
+
+          // After-transition instruction
+          let afterStart = currentTime
+          let itemEnd = insertAt + item.duration
+          if itemEnd > afterStart {
+            let afterInst = AVMutableVideoCompositionInstruction()
+            afterInst.timeRange = CMTimeRange(start: afterStart, end: itemEnd)
+            let afterLI = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
+            afterInst.layerInstructions = [afterLI]
+            instructions.append(afterInst)
+          }
+          currentTime = insertAt + item.duration
+
+        case .fadeToBlack(let durationMs):
+          let halfMs = durationMs / 2
+          let halfDur = CMTime(value: CMTimeValue(halfMs), timescale: 1000)
+
+          // Add fade-out to previous instruction
+          if let prev = instructions.last, let prevLI = prev.layerInstructions.first as? AVMutableVideoCompositionLayerInstruction {
+            let fadeOutStart = prev.timeRange.end - halfDur
+            let fadeOutRange = CMTimeRange(start: fadeOutStart, end: prev.timeRange.end)
+            prevLI.setOpacityRamp(fromStartOpacity: 1.0, toEndOpacity: 0.0, timeRange: fadeOutRange)
+          }
+
+          do { try currTrack.insertTimeRange(item.assetRange, of: srcTrack, at: currentTime) } catch { completion(.failure(error)); return }
+          let itemEnd = currentTime + item.duration
+          let fadeInEnd = currentTime + halfDur
+          let inst = AVMutableVideoCompositionInstruction()
+          inst.timeRange = CMTimeRange(start: currentTime, end: itemEnd)
+          let li = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
+          li.setTransform(srcTrack.preferredTransform, at: .zero)
+          li.setOpacityRamp(fromStartOpacity: 0.0, toEndOpacity: 1.0, timeRange: CMTimeRange(start: currentTime, end: fadeInEnd))
+          inst.layerInstructions = [li]
+          instructions.append(inst)
+          currentTime = itemEnd
+        }
+      }
+
+      onProgress(0.3)
+
+      // Step 3: Build videoComposition with instructions + overlays
+      let videoComposition = AVMutableVideoComposition()
+      videoComposition.renderSize = renderSize
+      videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+      videoComposition.instructions = instructions
+
+      let videoCompositionWithOverlays = OverlayCompositor.applyOverlays(
+        to: videoComposition,
+        composition: composition,
+        overlays: job.overlays
+      )
+
+      // Step 4: Audio mix
+      let audioMix = AudioMixer.buildAudioMix(
+        composition: composition,
+        originalTrack: composition.tracks(withMediaType: .audio).first as? AVMutableCompositionTrack,
+        musicOptions: job.audio
+      )
+
+      // Step 5: Export
+      self.export(
+        composition: composition,
+        videoComposition: videoCompositionWithOverlays,
+        audioMix: audioMix,
+        outputURL: outputURL,
+        quality: job.quality,
+        onSessionReady: onSessionReady,
+        completion: { result in
+          // Cleanup temp image videos
+          resolved.compactMap { $0.tempURL }.forEach { try? FileManager.default.removeItem(at: $0) }
+          completion(result)
+        }
+      )
+    }
+  }
+
+  // MARK: Image → temp AVAsset
+
+  private func imageToAsset(image: UIImage, duration: CMTime) -> (AVAsset, URL)? {
+    let pixelSize = CGSize(
+      width: image.size.width * image.scale,
+      height: image.size.height * image.scale
+    )
+    guard pixelSize.width > 0, pixelSize.height > 0 else { return nil }
+
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("expo-media-edit")
+    try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    let outputURL = tempDir.appendingPathComponent(UUID().uuidString + "-img.mp4")
+
+    guard let writer = try? AVAssetWriter(outputURL: outputURL, fileType: .mp4) else { return nil }
+    let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
+      AVVideoCodecKey: AVVideoCodecType.h264,
+      AVVideoWidthKey: Int(pixelSize.width),
+      AVVideoHeightKey: Int(pixelSize.height),
+    ])
+    videoInput.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput, sourcePixelBufferAttributes: nil)
+    writer.add(videoInput)
+    writer.startWriting()
+    writer.startSession(atSourceTime: .zero)
+
+    guard let pixelBuffer = image.cvPixelBuffer(size: pixelSize) else { return nil }
+
+    // Write a frame every second for the whole duration
+    let durationSec = CMTimeGetSeconds(duration)
+    var t = 0.0
+    while t < durationSec {
+      while !adaptor.assetWriterInput.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.001) }
+      adaptor.append(pixelBuffer, withPresentationTime: CMTime(seconds: t, preferredTimescale: 600))
+      t += 1.0
+    }
+
+    videoInput.markAsFinished()
+    let sem = DispatchSemaphore(value: 0)
+    writer.finishWriting { sem.signal() }
+    sem.wait()
+
+    guard writer.status == .completed else { return nil }
+    return (AVAsset(url: outputURL), outputURL)
+  }
+
+  // MARK: Export
 
   private func export(
     composition: AVMutableComposition,
@@ -208,7 +525,6 @@ enum MediaEditError: Error {
     }
 
     try? FileManager.default.removeItem(at: outputURL)
-
     exportSession.outputURL = outputURL
     exportSession.outputFileType = .mp4
     if let vc = videoComposition { exportSession.videoComposition = vc }
@@ -231,5 +547,32 @@ enum MediaEditError: Error {
         completion(.failure(MediaEditError.exportFailed("Unexpected export status")))
       }
     }
+  }
+}
+
+// MARK: - UIImage → CVPixelBuffer
+
+extension UIImage {
+  func cvPixelBuffer(size: CGSize) -> CVPixelBuffer? {
+    let attrs = [kCVPixelBufferCGImageCompatibilityKey: kCFBooleanTrue!,
+                 kCVPixelBufferCGBitmapContextCompatibilityKey: kCFBooleanTrue!] as CFDictionary
+    var pb: CVPixelBuffer?
+    guard CVPixelBufferCreate(kCFAllocatorDefault, Int(size.width), Int(size.height),
+                              kCVPixelFormatType_32ARGB, attrs, &pb) == kCVReturnSuccess,
+          let buffer = pb else { return nil }
+    CVPixelBufferLockBaseAddress(buffer, [])
+    guard let ctx = CGContext(
+      data: CVPixelBufferGetBaseAddress(buffer),
+      width: Int(size.width), height: Int(size.height),
+      bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+      space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
+    ), let cg = self.cgImage else {
+      CVPixelBufferUnlockBaseAddress(buffer, [])
+      return nil
+    }
+    ctx.draw(cg, in: CGRect(origin: .zero, size: size))
+    CVPixelBufferUnlockBaseAddress(buffer, [])
+    return buffer
   }
 }

@@ -1,7 +1,7 @@
-export { EditJob, OverlayItem, TextOverlay, ImageOverlay, AudioMix, VideoInfo, ThumbnailOptions, ProgressEvent } from './types';
+export { EditJob, OverlayItem, TextOverlay, ImageOverlay, AudioMix, VideoInfo, ThumbnailOptions, ProgressEvent, Transition, PlaylistItem } from './types';
 
 import ExpoMediaEditModule, { emitter } from './ExpoMediaEditModule';
-import type { EditJob, VideoInfo, ThumbnailOptions, ProgressEvent } from './types';
+import type { EditJob, VideoInfo, ThumbnailOptions, ProgressEvent, PlaylistItem } from './types';
 
 function validateUri(uri: string, label: string): void {
   if (uri.includes('../')) {
@@ -12,11 +12,47 @@ function validateUri(uri: string, label: string): void {
   }
 }
 
-function validateEditJob(job: EditJob): void {
-  if (!job.inputUri || typeof job.inputUri !== 'string' || job.inputUri.trim() === '') {
-    throw new Error('editVideo: inputUri is required and must be a non-empty string.');
+function validatePlaylistItem(item: PlaylistItem, index: number): void {
+  if (item.type !== 'video' && item.type !== 'image') {
+    throw new Error(`editVideo: playlist[${index}].type must be 'video' or 'image'.`);
   }
-  if (job.trim !== undefined) {
+  if (!item.uri || typeof item.uri !== 'string') {
+    throw new Error(`editVideo: playlist[${index}].uri is required.`);
+  }
+  validateUri(item.uri, `editVideo: playlist[${index}].uri`);
+  if (item.type === 'image') {
+    if (typeof item.durationMs !== 'number' || item.durationMs <= 0) {
+      throw new Error(`editVideo: playlist[${index}].durationMs must be a positive number.`);
+    }
+  }
+  if (item.type === 'video' && item.trim !== undefined) {
+    if (item.trim.startMs < 0) throw new Error(`editVideo: playlist[${index}].trim.startMs must be >= 0.`);
+    if (item.trim.startMs >= item.trim.endMs) throw new Error(`editVideo: playlist[${index}].trim.startMs must be less than endMs.`);
+  }
+  if (item.transition !== undefined) {
+    const t = item.transition;
+    if (t.type !== 'cut' && t.type !== 'fade' && t.type !== 'fadeToBlack') {
+      throw new Error(`editVideo: playlist[${index}].transition.type must be 'cut', 'fade', or 'fadeToBlack'.`);
+    }
+    if ((t.type === 'fade' || t.type === 'fadeToBlack') && (typeof t.durationMs !== 'number' || t.durationMs <= 0)) {
+      throw new Error(`editVideo: playlist[${index}].transition.durationMs must be a positive number.`);
+    }
+  }
+}
+
+function validateEditJob(job: EditJob): void {
+  const hasPlaylist = Array.isArray(job.playlist) && job.playlist.length > 0;
+  const hasInputUri = typeof job.inputUri === 'string' && job.inputUri.trim() !== '';
+
+  if (!hasPlaylist && !hasInputUri) {
+    throw new Error('editVideo: either inputUri or playlist is required.');
+  }
+  if (hasPlaylist) {
+    for (let i = 0; i < job.playlist!.length; i++) {
+      validatePlaylistItem(job.playlist![i], i);
+    }
+  }
+  if (!hasPlaylist && job.trim !== undefined) {
     if (typeof job.trim.startMs !== 'number' || typeof job.trim.endMs !== 'number') {
       throw new Error('editVideo: trim.startMs and trim.endMs must be numbers.');
     }
@@ -107,16 +143,18 @@ export function addProgressListener(callback: (event: ProgressEvent) => void) {
 export async function editVideo(job: EditJob): Promise<string> {
   validateEditJob(job);
 
-  const { inputUri, outputUri, trim, overlays, audio, quality } = job;
+  // Normalize: inputUri → playlist so native always receives a playlist
+  const playlist: PlaylistItem[] = job.playlist ?? [
+    { type: 'video', uri: job.inputUri!, trim: job.trim },
+  ];
 
-  const jobDict: Record<string, unknown> = {};
-  if (outputUri !== undefined) jobDict.outputUri = outputUri;
-  if (trim !== undefined) jobDict.trim = trim;
-  if (overlays !== undefined) jobDict.overlays = overlays;
-  if (audio !== undefined) jobDict.audio = audio;
-  if (quality !== undefined) jobDict.quality = quality;
+  const jobDict: Record<string, unknown> = { playlist };
+  if (job.outputUri !== undefined) jobDict.outputUri = job.outputUri;
+  if (job.overlays !== undefined) jobDict.overlays = job.overlays;
+  if (job.audio !== undefined) jobDict.audio = job.audio;
+  if (job.quality !== undefined) jobDict.quality = job.quality;
 
-  return ExpoMediaEditModule.editVideo(inputUri, jobDict);
+  return ExpoMediaEditModule.editVideo(jobDict);
 }
 
 /**

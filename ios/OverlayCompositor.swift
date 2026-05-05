@@ -48,6 +48,44 @@ public class OverlayCompositor {
     return videoComposition
   }
 
+  // Used by the playlist path: apply overlays to an already-built videoComposition
+  public static func applyOverlays(
+    to videoComposition: AVMutableVideoComposition,
+    composition: AVMutableComposition,
+    overlays: [OverlayOptions]
+  ) -> AVMutableVideoComposition {
+    guard !overlays.isEmpty else { return videoComposition }
+
+    let videoSize = videoComposition.renderSize
+    let duration = composition.duration
+
+    let parentLayer = CALayer()
+    parentLayer.frame = CGRect(origin: .zero, size: videoSize)
+
+    let videoLayer = CALayer()
+    videoLayer.frame = CGRect(origin: .zero, size: videoSize)
+    parentLayer.addSublayer(videoLayer)
+
+    for overlay in overlays {
+      switch overlay {
+      case .text(let opts):
+        let layer = buildTextLayer(opts: opts, videoSize: videoSize, duration: duration)
+        parentLayer.addSublayer(layer)
+      case .image(let opts):
+        if let layer = buildImageLayer(opts: opts, videoSize: videoSize, duration: duration) {
+          parentLayer.addSublayer(layer)
+        }
+      }
+    }
+
+    videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
+      postProcessingAsVideoLayer: videoLayer,
+      in: parentLayer
+    )
+
+    return videoComposition
+  }
+
   private static func buildTextLayer(
     opts: TextOverlayOptions,
     videoSize: CGSize,

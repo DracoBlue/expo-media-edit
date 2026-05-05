@@ -2,6 +2,18 @@ package expo.modules.mediaedit
 
 data class TrimOptions(val startMs: Long, val endMs: Long)
 
+// Playlist types (0.4.0)
+sealed class TransitionConfig {
+  object Cut : TransitionConfig()
+  data class Fade(val durationMs: Long) : TransitionConfig()
+  data class FadeToBlack(val durationMs: Long) : TransitionConfig()
+}
+
+sealed class PlaylistItemConfig {
+  data class VideoItem(val uri: String, val trim: TrimOptions?, val transition: TransitionConfig) : PlaylistItemConfig()
+  data class ImageItem(val uri: String, val durationMs: Long, val transition: TransitionConfig) : PlaylistItemConfig()
+}
+
 data class TextOverlayItem(
   val content: String,
   val x: Float,
@@ -44,7 +56,8 @@ data class EditJob(
   val trim: TrimOptions?,
   val overlays: List<OverlayItem>,
   val audio: AudioMixOptions?,
-  val quality: String
+  val quality: String,
+  val playlist: List<PlaylistItemConfig>?
 ) {
   companion object {
     @Suppress("UNCHECKED_CAST")
@@ -58,6 +71,22 @@ data class EditJob(
           endMs = (t["endMs"] as? Number)?.toLong() ?: 0L
         )
       }
+
+      val playlist = (map["playlist"] as? List<Map<String, Any?>>)?.mapIndexedNotNull { i, p ->
+        val uri = p["uri"] as? String ?: return@mapIndexedNotNull null
+        if (uri.contains("../") || (!uri.startsWith("file://") && !uri.startsWith("https://"))) return@mapIndexedNotNull null
+        val transition = parseTransition(p["transition"] as? Map<String, Any?>, isFirst = i == 0)
+        when (p["type"] as? String) {
+          "video" -> {
+            val t = (p["trim"] as? Map<String, Any?>)?.let { td ->
+              TrimOptions((td["startMs"] as? Number)?.toLong() ?: 0L, (td["endMs"] as? Number)?.toLong() ?: 0L)
+            }
+            PlaylistItemConfig.VideoItem(uri, t, transition)
+          }
+          "image" -> PlaylistItemConfig.ImageItem(uri, (p["durationMs"] as? Number)?.toLong() ?: 3000L, transition)
+          else -> null
+        }
+      }?.takeIf { it.isNotEmpty() }
 
       val overlays = mutableListOf<OverlayItem>()
       (map["overlays"] as? List<Map<String, Any?>>)?.forEach { o ->
@@ -106,7 +135,16 @@ data class EditJob(
         )
       }
 
-      return EditJob(outputUri = outputUri, trim = trim, overlays = overlays, audio = audio, quality = quality)
+      return EditJob(outputUri = outputUri, trim = trim, overlays = overlays, audio = audio, quality = quality, playlist = playlist)
+    }
+
+    private fun parseTransition(d: Map<String, Any?>?, isFirst: Boolean): TransitionConfig {
+      if (isFirst || d == null) return TransitionConfig.Cut
+      return when (d["type"] as? String) {
+        "fade" -> TransitionConfig.Fade((d["durationMs"] as? Number)?.toLong() ?: 500L)
+        "fadeToBlack" -> TransitionConfig.FadeToBlack((d["durationMs"] as? Number)?.toLong() ?: 500L)
+        else -> TransitionConfig.Cut
+      }
     }
   }
 }

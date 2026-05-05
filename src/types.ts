@@ -26,6 +26,15 @@ export type ImageOverlay = {
 
 export type OverlayItem = TextOverlay | ImageOverlay;
 
+export type Transition =
+  | { type: 'cut' }
+  | { type: 'fade'; durationMs: number }
+  | { type: 'fadeToBlack'; durationMs: number };
+
+export type PlaylistItem =
+  | { type: 'video'; uri: string; trim?: { startMs: number; endMs: number }; transition?: Transition }
+  | { type: 'image'; uri: string; durationMs: number; transition?: Transition };
+
 export type AudioMix = {
   uri: string;
   volume?: number;
@@ -35,9 +44,10 @@ export type AudioMix = {
 };
 
 export type EditJob = {
-  inputUri: string;
+  inputUri?: string;           // single-video shorthand; ignored when playlist is provided
+  playlist?: PlaylistItem[];   // new in 0.4.0; takes precedence over inputUri
   outputUri?: string;
-  trim?: { startMs: number; endMs: number };
+  trim?: { startMs: number; endMs: number };  // only applies in inputUri mode
   overlays?: OverlayItem[];
   audio?: AudioMix;
   quality?: 'low' | 'medium' | 'high';
