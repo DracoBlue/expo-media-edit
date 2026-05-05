@@ -3,6 +3,9 @@ package expo.modules.mediaedit
 import android.content.Context
 import android.graphics.*
 import android.media.*
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import java.io.File
 import java.nio.ByteBuffer
 
@@ -269,26 +272,30 @@ class OverlayCompositor(private val context: Context) {
         is OverlayItem.Text -> {
           val opts = overlay.opts
           if (frameTimeMs < (opts.startMs ?: 0L) || frameTimeMs > (opts.endMs ?: Long.MAX_VALUE)) continue
-          val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+          val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             try { color = Color.parseColor(opts.color) } catch (_: Exception) { color = Color.WHITE }
             textSize = opts.fontSize * (videoHeight / 1080f)
             typeface = if (opts.fontWeight == "bold") Typeface.DEFAULT_BOLD else Typeface.DEFAULT
           }
+          val maxWidth = (videoWidth * 0.9f).toInt()
+          val layout = StaticLayout.Builder
+            .obtain(opts.content, 0, opts.content.length, textPaint, maxWidth)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .build()
           val x = opts.x * videoWidth
           val y = opts.y * videoHeight
-          if (opts.rotation != 0f) canvas.save()
-          if (opts.rotation != 0f) canvas.rotate(opts.rotation, x, y)
+          canvas.save()
+          canvas.translate(x, y)
+          if (opts.rotation != 0f) canvas.rotate(opts.rotation, layout.width / 2f, layout.height / 2f)
           opts.backgroundColor?.let { bgColorStr ->
             val bgPaint = Paint().apply {
               try { color = Color.parseColor(bgColorStr) } catch (_: Exception) { color = Color.TRANSPARENT }
             }
-            val bounds = Rect()
-            textPaint.getTextBounds(opts.content, 0, opts.content.length, bounds)
             val pad = 8f
-            canvas.drawRect(x - pad, y - bounds.height() - pad, x + bounds.width() + pad, y + pad, bgPaint)
+            canvas.drawRect(-pad, -pad, layout.width + pad, layout.height + pad, bgPaint)
           }
-          canvas.drawText(opts.content, x, y, textPaint)
-          if (opts.rotation != 0f) canvas.restore()
+          layout.draw(canvas)
+          canvas.restore()
         }
         is OverlayItem.Image -> {
           val opts = overlay.opts

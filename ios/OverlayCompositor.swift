@@ -53,9 +53,10 @@ public class OverlayCompositor {
     videoSize: CGSize,
     duration: CMTime
   ) -> CALayer {
-    let fontSize = CGFloat(opts.fontSize)
+    // Scale fontSize consistently with Android (reference: 1080px height)
+    let fontSize = CGFloat(opts.fontSize) * videoSize.height / 1080.0
     let layerWidth = videoSize.width * 0.9
-    let layerHeight = fontSize * 2.5
+    let layerHeight = fontSize * 8.0  // generous height for multi-line wrapping
 
     // CALayer Y is inverted: y=0 is bottom in Core Animation
     let xPos = CGFloat(opts.x) * videoSize.width

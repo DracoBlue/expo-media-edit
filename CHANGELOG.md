@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-05-05
+
+### Fixed
+- **iOS font size consistency** — `fontSize` is now scaled by `videoHeight / 1080` on iOS, matching the existing Android behaviour. Text size in rendered videos is now identical across platforms.
+- **Android text wrapping** — `canvas.drawText()` replaced by `StaticLayout` so multi-line text wraps at 90% of video width, matching iOS (`CATextLayer.isWrapped = true`).
+- **iOS layer height for multi-line text** — `layerHeight` increased from `fontSize * 2.5` to `fontSize * 8` so wrapped text is no longer clipped.
+- **Android rotation pivot** — rotation is now applied around the center of the `StaticLayout` bounds (was around the text anchor point).
+
 ## [0.3.0] - 2026-05-05
 
 ### Added
