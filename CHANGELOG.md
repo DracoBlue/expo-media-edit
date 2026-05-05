@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-05-05
+
+### Added
+- **`slide` transition** — `{ type: 'slide'; durationMs: number; direction?: 'left' | 'right' | 'up' | 'down' }` (default direction: `'left'`). The previous item slides out while the new item slides in simultaneously over `durationMs`. Timeline overlap is the same as `fade` (total duration shortened by `durationMs`). iOS uses `setTransformRamp` on `AVMutableVideoCompositionLayerInstruction`; Android translates the canvas per-frame.
+
 ## [0.4.0] - 2026-05-05
 
 ### Added

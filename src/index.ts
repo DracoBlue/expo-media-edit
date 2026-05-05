@@ -31,10 +31,10 @@ function validatePlaylistItem(item: PlaylistItem, index: number): void {
   }
   if (item.transition !== undefined) {
     const t = item.transition;
-    if (t.type !== 'cut' && t.type !== 'fade' && t.type !== 'fadeToBlack') {
-      throw new Error(`editVideo: playlist[${index}].transition.type must be 'cut', 'fade', or 'fadeToBlack'.`);
+    if (t.type !== 'cut' && t.type !== 'fade' && t.type !== 'fadeToBlack' && t.type !== 'slide') {
+      throw new Error(`editVideo: playlist[${index}].transition.type must be 'cut', 'fade', 'fadeToBlack', or 'slide'.`);
     }
-    if ((t.type === 'fade' || t.type === 'fadeToBlack') && (typeof t.durationMs !== 'number' || t.durationMs <= 0)) {
+    if ((t.type === 'fade' || t.type === 'fadeToBlack' || t.type === 'slide') && (typeof t.durationMs !== 'number' || t.durationMs <= 0)) {
       throw new Error(`editVideo: playlist[${index}].transition.durationMs must be a positive number.`);
     }
   }

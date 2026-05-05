@@ -29,7 +29,8 @@ export type OverlayItem = TextOverlay | ImageOverlay;
 export type Transition =
   | { type: 'cut' }
   | { type: 'fade'; durationMs: number }
-  | { type: 'fadeToBlack'; durationMs: number };
+  | { type: 'fadeToBlack'; durationMs: number }
+  | { type: 'slide'; durationMs: number; direction?: 'left' | 'right' | 'up' | 'down' };
 
 export type PlaylistItem =
   | { type: 'video'; uri: string; trim?: { startMs: number; endMs: number }; transition?: Transition }

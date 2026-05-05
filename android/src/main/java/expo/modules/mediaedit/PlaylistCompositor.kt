@@ -86,12 +86,13 @@ class PlaylistCompositor(private val context: Context) {
         first.bitmap?.let { videoWidth = it.width; videoHeight = it.height }
       }
 
-      // Build timeline: each item's composition start accounting for overlap from fade transitions
+      // Build timeline: each item's composition start accounting for overlap from fade/slide transitions
       val timelines = mutableListOf<Timeline>()
       var cursor = 0L
       for ((i, src) in sources.withIndex()) {
         val overlapMs = when (val t = src.transition) {
           is TransitionConfig.Fade -> if (i > 0) t.durationMs else 0L
+          is TransitionConfig.Slide -> if (i > 0) t.durationMs else 0L
           else -> 0L
         }
         timelines.add(Timeline(startMs = cursor - overlapMs, durationMs = src.durationMs))
@@ -220,7 +221,7 @@ class PlaylistCompositor(private val context: Context) {
     videoWidth: Int,
     videoHeight: Int
   ): Bitmap? {
-    data class ActiveItem(val srcIndex: Int, val localTimeMs: Long, val alpha: Float)
+    data class ActiveItem(val srcIndex: Int, val localTimeMs: Long, val alpha: Float, val dx: Float = 0f, val dy: Float = 0f)
     val active = mutableListOf<ActiveItem>()
 
     for (i in sources.indices) {
@@ -230,15 +231,30 @@ class PlaylistCompositor(private val context: Context) {
 
       val localTime = frameTimeMs - tl.startMs
       var alpha = 1.0f
+      var dx = 0f
+      var dy = 0f
 
-      // Fade-in for this item (Fade transition: this item fades in during overlap)
+      // Fade-in / slide-in for this item
       when (val t = sources[i].transition) {
         is TransitionConfig.Fade -> {
           if (i > 0) {
-            val overlapStart = tl.startMs
             val prevEnd = timelines[i - 1].startMs + timelines[i - 1].durationMs
             if (frameTimeMs < prevEnd) {
-              alpha = ((frameTimeMs - overlapStart).toFloat() / t.durationMs.toFloat()).coerceIn(0f, 1f)
+              alpha = ((frameTimeMs - tl.startMs).toFloat() / t.durationMs.toFloat()).coerceIn(0f, 1f)
+            }
+          }
+        }
+        is TransitionConfig.Slide -> {
+          if (i > 0) {
+            val prevEnd = timelines[i - 1].startMs + timelines[i - 1].durationMs
+            if (frameTimeMs < prevEnd) {
+              val progress = ((frameTimeMs - tl.startMs).toFloat() / t.durationMs.toFloat()).coerceIn(0f, 1f)
+              when (t.direction) {
+                "right" -> dx = videoWidth * (1f - progress)
+                "up"    -> dy = videoHeight * (1f - progress)
+                "down"  -> dy = -videoHeight * (1f - progress)
+                else    -> dx = -videoWidth * (1f - progress)  // "left" default
+              }
             }
           }
         }
@@ -251,7 +267,7 @@ class PlaylistCompositor(private val context: Context) {
         else -> {}
       }
 
-      // Fade-out driven by next item's transition
+      // Fade-out / slide-out driven by next item's transition
       if (i < sources.size - 1) {
         when (val nt = sources[i + 1].transition) {
           is TransitionConfig.FadeToBlack -> {
@@ -267,11 +283,23 @@ class PlaylistCompositor(private val context: Context) {
               alpha = (1f - (frameTimeMs - nextStart).toFloat() / nt.durationMs.toFloat()).coerceIn(0f, 1f)
             }
           }
+          is TransitionConfig.Slide -> {
+            val nextStart = timelines[i + 1].startMs
+            if (frameTimeMs >= nextStart) {
+              val progress = ((frameTimeMs - nextStart).toFloat() / nt.durationMs.toFloat()).coerceIn(0f, 1f)
+              when (nt.direction) {
+                "right" -> dx = -videoWidth * progress
+                "up"    -> dy = videoHeight * progress
+                "down"  -> dy = -videoHeight * progress
+                else    -> dx = -videoWidth * progress  // "left" default: push out to left
+              }
+            }
+          }
           else -> {}
         }
       }
 
-      active.add(ActiveItem(i, localTime, alpha))
+      active.add(ActiveItem(i, localTime, alpha, dx, dy))
     }
 
     if (active.isEmpty()) return null
@@ -300,7 +328,10 @@ class PlaylistCompositor(private val context: Context) {
       } ?: continue
 
       val paint = Paint().apply { alpha = (ai.alpha * 255).toInt().coerceIn(0, 255) }
+      canvas.save()
+      if (ai.dx != 0f || ai.dy != 0f) canvas.translate(ai.dx, ai.dy)
       canvas.drawBitmap(frame, 0f, 0f, paint)
+      canvas.restore()
       if (src.type == "video") frame.recycle()
     }
 

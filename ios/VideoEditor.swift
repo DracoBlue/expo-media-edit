@@ -51,6 +51,7 @@ public enum TransitionOptions {
   case cut
   case fade(durationMs: Double)
   case fadeToBlack(durationMs: Double)
+  case slide(durationMs: Double, direction: String)
 }
 
 public struct PlaylistVideoOptions {
@@ -184,6 +185,7 @@ public struct EditJobOptions {
     switch d["type"] as? String {
     case "fade":      return .fade(durationMs: d["durationMs"] as? Double ?? 500)
     case "fadeToBlack": return .fadeToBlack(durationMs: d["durationMs"] as? Double ?? 500)
+    case "slide":     return .slide(durationMs: d["durationMs"] as? Double ?? 500, direction: d["direction"] as? String ?? "left")
     default:          return .cut
     }
   }
@@ -415,6 +417,67 @@ enum MediaEditError: Error {
           inst.layerInstructions = [li]
           instructions.append(inst)
           currentTime = itemEnd
+
+        case .slide(let durationMs, let direction):
+          let transMs = min(durationMs, CMTimeGetSeconds(item.duration) * 1000)
+          let transDur = CMTime(value: CMTimeValue(transMs), timescale: 1000)
+          let insertAt = currentTime - transDur
+          do { try currTrack.insertTimeRange(item.assetRange, of: srcTrack, at: insertAt) } catch { completion(.failure(error)); return }
+
+          if let prev = instructions.last {
+            prev.timeRange = CMTimeRange(start: prev.timeRange.start, end: insertAt)
+          }
+
+          let overlapRange = CMTimeRange(start: insertAt, end: currentTime)
+          let w = renderSize.width; let h = renderSize.height
+
+          let overlapInst = AVMutableVideoCompositionInstruction()
+          overlapInst.timeRange = overlapRange
+          let prevLI = AVMutableVideoCompositionLayerInstruction(assetTrack: prevTrack)
+          let currLI = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
+          currLI.setTransform(srcTrack.preferredTransform, at: .zero)
+
+          // Compute start and end transforms for the slide
+          let (prevStart, prevEnd, currStart, currEnd): (CGAffineTransform, CGAffineTransform, CGAffineTransform, CGAffineTransform)
+          switch direction {
+          case "right":
+            prevStart = .identity
+            prevEnd = CGAffineTransform(translationX: w, y: 0)
+            currStart = CGAffineTransform(translationX: -w, y: 0)
+            currEnd = .identity
+          case "up":
+            prevStart = .identity
+            prevEnd = CGAffineTransform(translationX: 0, y: -h)
+            currStart = CGAffineTransform(translationX: 0, y: h)
+            currEnd = .identity
+          case "down":
+            prevStart = .identity
+            prevEnd = CGAffineTransform(translationX: 0, y: h)
+            currStart = CGAffineTransform(translationX: 0, y: -h)
+            currEnd = .identity
+          default: // "left"
+            prevStart = .identity
+            prevEnd = CGAffineTransform(translationX: -w, y: 0)
+            currStart = CGAffineTransform(translationX: w, y: 0)
+            currEnd = .identity
+          }
+
+          prevLI.setTransformRamp(fromStart: prevStart, toEnd: prevEnd, timeRange: overlapRange)
+          currLI.setTransformRamp(fromStart: currStart, toEnd: currEnd, timeRange: overlapRange)
+          overlapInst.layerInstructions = [currLI, prevLI]
+          instructions.append(overlapInst)
+
+          let afterStart = currentTime
+          let itemEnd = insertAt + item.duration
+          if itemEnd > afterStart {
+            let afterInst = AVMutableVideoCompositionInstruction()
+            afterInst.timeRange = CMTimeRange(start: afterStart, end: itemEnd)
+            let afterLI = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
+            afterLI.setTransform(srcTrack.preferredTransform, at: .zero)
+            afterInst.layerInstructions = [afterLI]
+            instructions.append(afterInst)
+          }
+          currentTime = insertAt + item.duration
         }
       }
 

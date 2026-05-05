@@ -7,6 +7,7 @@ sealed class TransitionConfig {
   object Cut : TransitionConfig()
   data class Fade(val durationMs: Long) : TransitionConfig()
   data class FadeToBlack(val durationMs: Long) : TransitionConfig()
+  data class Slide(val durationMs: Long, val direction: String) : TransitionConfig()
 }
 
 sealed class PlaylistItemConfig {
@@ -143,6 +144,7 @@ data class EditJob(
       return when (d["type"] as? String) {
         "fade" -> TransitionConfig.Fade((d["durationMs"] as? Number)?.toLong() ?: 500L)
         "fadeToBlack" -> TransitionConfig.FadeToBlack((d["durationMs"] as? Number)?.toLong() ?: 500L)
+        "slide" -> TransitionConfig.Slide((d["durationMs"] as? Number)?.toLong() ?: 500L, d["direction"] as? String ?: "left")
         else -> TransitionConfig.Cut
       }
     }
