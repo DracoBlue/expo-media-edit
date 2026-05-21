@@ -354,11 +354,13 @@ enum MediaEditError: Error {
       var instructions: [AVMutableVideoCompositionInstruction] = []
       var currentTime = CMTime.zero
       var renderSize = CGSize(width: 1920, height: 1080)
+      var prevSrcTransform = CGAffineTransform.identity
 
       for (i, item) in resolved.enumerated() {
         guard let srcTrack = item.asset.tracks(withMediaType: .video).first else { continue }
+        let srcTx = srcTrack.preferredTransform
         if i == 0 {
-          let nat = srcTrack.naturalSize.applying(srcTrack.preferredTransform)
+          let nat = srcTrack.naturalSize.applying(srcTx)
           renderSize = CGSize(width: abs(nat.width), height: abs(nat.height))
         }
 
@@ -371,7 +373,7 @@ enum MediaEditError: Error {
           let inst = AVMutableVideoCompositionInstruction()
           inst.timeRange = CMTimeRange(start: currentTime, duration: item.duration)
           let li = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
-          li.setTransform(srcTrack.preferredTransform, at: .zero)
+          li.setTransform(srcTx, at: currentTime)
           inst.layerInstructions = [li]
           instructions.append(inst)
           currentTime = currentTime + item.duration
@@ -382,18 +384,19 @@ enum MediaEditError: Error {
           let insertAt = currentTime - transDur
           do { try currTrack.insertTimeRange(item.assetRange, of: srcTrack, at: insertAt) } catch { completion(.failure(error)); return }
 
-          // Truncate previous instruction to end at insertAt
           if let prev = instructions.last {
             prev.timeRange = CMTimeRange(start: prev.timeRange.start, end: insertAt)
           }
 
-          // Overlap instruction: cross-dissolve
+          // Overlap instruction: cross-dissolve — both tracks need their transforms
           let overlapRange = CMTimeRange(start: insertAt, end: currentTime)
           let overlapInst = AVMutableVideoCompositionInstruction()
           overlapInst.timeRange = overlapRange
           let prevLI = AVMutableVideoCompositionLayerInstruction(assetTrack: prevTrack)
+          prevLI.setTransform(prevSrcTransform, at: insertAt)
           prevLI.setOpacityRamp(fromStartOpacity: 1.0, toEndOpacity: 0.0, timeRange: overlapRange)
           let currLI = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
+          currLI.setTransform(srcTx, at: insertAt)
           currLI.setOpacityRamp(fromStartOpacity: 0.0, toEndOpacity: 1.0, timeRange: overlapRange)
           overlapInst.layerInstructions = [currLI, prevLI]
           instructions.append(overlapInst)
@@ -405,6 +408,7 @@ enum MediaEditError: Error {
             let afterInst = AVMutableVideoCompositionInstruction()
             afterInst.timeRange = CMTimeRange(start: afterStart, end: itemEnd)
             let afterLI = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
+            afterLI.setTransform(srcTx, at: afterStart)
             afterInst.layerInstructions = [afterLI]
             instructions.append(afterInst)
           }
@@ -414,7 +418,6 @@ enum MediaEditError: Error {
           let halfMs = durationMs / 2
           let halfDur = CMTime(value: CMTimeValue(halfMs), timescale: 1000)
 
-          // Add fade-out to previous instruction
           if let prev = instructions.last, let prevLI = prev.layerInstructions.first as? AVMutableVideoCompositionLayerInstruction {
             let fadeOutStart = prev.timeRange.end - halfDur
             let fadeOutRange = CMTimeRange(start: fadeOutStart, end: prev.timeRange.end)
@@ -427,7 +430,7 @@ enum MediaEditError: Error {
           let inst = AVMutableVideoCompositionInstruction()
           inst.timeRange = CMTimeRange(start: currentTime, end: itemEnd)
           let li = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
-          li.setTransform(srcTrack.preferredTransform, at: .zero)
+          li.setTransform(srcTx, at: currentTime)
           li.setOpacityRamp(fromStartOpacity: 0.0, toEndOpacity: 1.0, timeRange: CMTimeRange(start: currentTime, end: fadeInEnd))
           inst.layerInstructions = [li]
           instructions.append(inst)
@@ -446,37 +449,36 @@ enum MediaEditError: Error {
           let overlapRange = CMTimeRange(start: insertAt, end: currentTime)
           let w = renderSize.width; let h = renderSize.height
 
+          // Compose slide translations with each item's preferredTransform so rotated
+          // videos (e.g. portrait iPhone clips) maintain their orientation during the slide
+          let (prevStart, prevEnd, currStart, currEnd): (CGAffineTransform, CGAffineTransform, CGAffineTransform, CGAffineTransform)
+          switch direction {
+          case "right":
+            prevStart = prevSrcTransform
+            prevEnd = prevSrcTransform.concatenating(CGAffineTransform(translationX: w, y: 0))
+            currStart = srcTx.concatenating(CGAffineTransform(translationX: -w, y: 0))
+            currEnd = srcTx
+          case "up":
+            prevStart = prevSrcTransform
+            prevEnd = prevSrcTransform.concatenating(CGAffineTransform(translationX: 0, y: -h))
+            currStart = srcTx.concatenating(CGAffineTransform(translationX: 0, y: h))
+            currEnd = srcTx
+          case "down":
+            prevStart = prevSrcTransform
+            prevEnd = prevSrcTransform.concatenating(CGAffineTransform(translationX: 0, y: h))
+            currStart = srcTx.concatenating(CGAffineTransform(translationX: 0, y: -h))
+            currEnd = srcTx
+          default: // "left"
+            prevStart = prevSrcTransform
+            prevEnd = prevSrcTransform.concatenating(CGAffineTransform(translationX: -w, y: 0))
+            currStart = srcTx.concatenating(CGAffineTransform(translationX: w, y: 0))
+            currEnd = srcTx
+          }
+
           let overlapInst = AVMutableVideoCompositionInstruction()
           overlapInst.timeRange = overlapRange
           let prevLI = AVMutableVideoCompositionLayerInstruction(assetTrack: prevTrack)
           let currLI = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
-          currLI.setTransform(srcTrack.preferredTransform, at: .zero)
-
-          // Compute start and end transforms for the slide
-          let (prevStart, prevEnd, currStart, currEnd): (CGAffineTransform, CGAffineTransform, CGAffineTransform, CGAffineTransform)
-          switch direction {
-          case "right":
-            prevStart = .identity
-            prevEnd = CGAffineTransform(translationX: w, y: 0)
-            currStart = CGAffineTransform(translationX: -w, y: 0)
-            currEnd = .identity
-          case "up":
-            prevStart = .identity
-            prevEnd = CGAffineTransform(translationX: 0, y: -h)
-            currStart = CGAffineTransform(translationX: 0, y: h)
-            currEnd = .identity
-          case "down":
-            prevStart = .identity
-            prevEnd = CGAffineTransform(translationX: 0, y: h)
-            currStart = CGAffineTransform(translationX: 0, y: -h)
-            currEnd = .identity
-          default: // "left"
-            prevStart = .identity
-            prevEnd = CGAffineTransform(translationX: -w, y: 0)
-            currStart = CGAffineTransform(translationX: w, y: 0)
-            currEnd = .identity
-          }
-
           prevLI.setTransformRamp(fromStart: prevStart, toEnd: prevEnd, timeRange: overlapRange)
           currLI.setTransformRamp(fromStart: currStart, toEnd: currEnd, timeRange: overlapRange)
           overlapInst.layerInstructions = [currLI, prevLI]
@@ -488,12 +490,14 @@ enum MediaEditError: Error {
             let afterInst = AVMutableVideoCompositionInstruction()
             afterInst.timeRange = CMTimeRange(start: afterStart, end: itemEnd)
             let afterLI = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
-            afterLI.setTransform(srcTrack.preferredTransform, at: .zero)
+            afterLI.setTransform(srcTx, at: afterStart)
             afterInst.layerInstructions = [afterLI]
             instructions.append(afterInst)
           }
           currentTime = insertAt + item.duration
         }
+
+        prevSrcTransform = srcTx
       }
 
       onProgress(0.3)

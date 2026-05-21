@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-05-21
+
+### Fixed
+- **iOS playlist transitions preserve per-item rotation.** Cross-fade and slide transitions previously set `preferredTransform` only on the incoming track's layer instruction; during the overlap the outgoing track lost its rotation and portrait clips appeared sideways. Both layer instructions in the overlap now get the correct transform (`prevSrcTransform` for the outgoing, `srcTx` for the incoming) at the overlap start time.
+- **iOS slide direction composes with rotation.** Previously the slide translations were applied as `.identity → translation`, which discarded the source's `preferredTransform`. Translations are now `srcTx.concatenating(translation)`, so rotated source clips stay correctly oriented during the slide.
+- **iOS `setTransform(_:at:)` time argument.** Was `.zero` (matched the first track but became ambiguous for later items on a shared track). Now uses the instruction's start time, which is unambiguous and matches the existing `setOpacityRamp` / `setTransformRamp` time ranges.
+
 ## [0.5.1] - 2026-05-05
 
 ### Fixed
