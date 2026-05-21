@@ -356,13 +356,32 @@ enum MediaEditError: Error {
       var renderSize = CGSize(width: 1920, height: 1080)
       var prevSrcTransform = CGAffineTransform.identity
 
+      // Aspect-fit transform: applies preferredTransform, then scales and centres the
+      // rendered frame inside renderSize so portrait clips don't overflow a landscape
+      // composition (and vice versa).
+      func fitTransform(_ srcTrack: AVAssetTrack) -> CGAffineTransform {
+        let pt = srcTrack.preferredTransform
+        let rendered = srcTrack.naturalSize.applying(pt)
+        let rW = abs(rendered.width); let rH = abs(rendered.height)
+        guard rW > 0, rH > 0 else { return pt }
+        if abs(rW - renderSize.width) < 0.5 && abs(rH - renderSize.height) < 0.5 { return pt }
+        let scale = min(renderSize.width / rW, renderSize.height / rH)
+        let scaledW = rW * scale
+        let scaledH = rH * scale
+        let dx = (renderSize.width - scaledW) / 2
+        let dy = (renderSize.height - scaledH) / 2
+        return pt
+          .concatenating(CGAffineTransform(scaleX: scale, y: scale))
+          .concatenating(CGAffineTransform(translationX: dx, y: dy))
+      }
+
       for (i, item) in resolved.enumerated() {
         guard let srcTrack = item.asset.tracks(withMediaType: .video).first else { continue }
-        let srcTx = srcTrack.preferredTransform
         if i == 0 {
-          let nat = srcTrack.naturalSize.applying(srcTx)
+          let nat = srcTrack.naturalSize.applying(srcTrack.preferredTransform)
           renderSize = CGSize(width: abs(nat.width), height: abs(nat.height))
         }
+        let srcTx = fitTransform(srcTrack)
 
         let currTrack = i % 2 == 0 ? track1 : track2
         let prevTrack = i % 2 == 0 ? track2 : track1

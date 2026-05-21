@@ -99,13 +99,38 @@ public class ExpoMediaEditModule: Module {
       let asset = AVAsset(url: url)
       let track = asset.tracks(withMediaType: .video).first
       let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-      promise.resolve([
+
+      // Apply preferredTransform so width/height reflect the rendered orientation
+      // (portrait clips have a 90° transform; natural is 1920×1080, rendered 1080×1920)
+      var width = Double(track?.naturalSize.width ?? 0)
+      var height = Double(track?.naturalSize.height ?? 0)
+      if let t = track {
+        let rendered = t.naturalSize.applying(t.preferredTransform)
+        width = Double(abs(rendered.width))
+        height = Double(abs(rendered.height))
+      }
+
+      // Extract codec from format descriptions for parity with Android
+      var codec: String? = nil
+      if let formatDescs = track?.formatDescriptions as? [CMFormatDescription],
+         let first = formatDescs.first {
+        let fourCC = CMFormatDescriptionGetMediaSubType(first)
+        codec = String(format: "%c%c%c%c",
+                       (fourCC >> 24) & 0xff,
+                       (fourCC >> 16) & 0xff,
+                       (fourCC >> 8) & 0xff,
+                       fourCC & 0xff)
+      }
+
+      var result: [String: Any] = [
         "durationMs": CMTimeGetSeconds(asset.duration) * 1000.0,
-        "width": Double(track?.naturalSize.width ?? 0),
-        "height": Double(track?.naturalSize.height ?? 0),
+        "width": width,
+        "height": height,
         "fps": Double(track?.nominalFrameRate ?? 0),
         "fileSize": fileSize
-      ])
+      ]
+      if let c = codec { result["codec"] = c }
+      promise.resolve(result)
     }
 
     AsyncFunction("generateThumbnail") { (uri: String, timeMs: Double, options: [String: Any]?, promise: Promise) in

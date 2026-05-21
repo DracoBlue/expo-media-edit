@@ -8,6 +8,13 @@ All notable changes to this project will be documented in this file.
 - **iOS playlist transitions preserve per-item rotation.** Cross-fade and slide transitions previously set `preferredTransform` only on the incoming track's layer instruction; during the overlap the outgoing track lost its rotation and portrait clips appeared sideways. Both layer instructions in the overlap now get the correct transform (`prevSrcTransform` for the outgoing, `srcTx` for the incoming) at the overlap start time.
 - **iOS slide direction composes with rotation.** Previously the slide translations were applied as `.identity → translation`, which discarded the source's `preferredTransform`. Translations are now `srcTx.concatenating(translation)`, so rotated source clips stay correctly oriented during the slide.
 - **iOS `setTransform(_:at:)` time argument.** Was `.zero` (matched the first track but became ambiguous for later items on a shared track). Now uses the instruction's start time, which is unambiguous and matches the existing `setOpacityRamp` / `setTransformRamp` time ranges.
+- **iOS playlist letterbox / aspect-fit.** When mixing portrait and landscape items in one playlist, later items kept their natural size and overflowed (or were cropped) inside the renderSize chosen from the first item. Each item is now aspect-fit (scale + centered translation composed onto `preferredTransform`) so mixed-aspect playlists letterbox cleanly.
+- **Android playlist now rejects with `INVALID_INPUT` instead of leaving the JS promise hanging** when the playlist contains no valid video item.
+
+### Changed
+- **`getVideoInfo` is platform-consistent now.**
+  - iOS: applies `preferredTransform` so portrait clips report `width: 1080, height: 1920` (was `1920×1080`), and now also returns `codec` (FourCC code from `CMFormatDescription`).
+  - Android: applies rotation metadata so portrait clips report swapped dimensions consistently with iOS, and `fps` is read from `MediaExtractor` (video track's `KEY_FRAME_RATE`) which is set for every encoded video; the previous `CAPTURE_FRAMERATE` source was only set for camera captures.
 
 ## [0.5.1] - 2026-05-05
 

@@ -1,5 +1,7 @@
 package expo.modules.mediaedit
 
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
@@ -100,11 +102,38 @@ class ExpoMediaEditModule : Module() {
       try {
         retriever.setDataSource(ctx, Uri.parse(uri))
         val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong() ?: 0L
-        val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toInt() ?: 0
-        val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toInt() ?: 0
-        val fps = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)?.toFloat() ?: 0f
+        val rawWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toInt() ?: 0
+        val rawHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toInt() ?: 0
+        val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toInt() ?: 0
+        // Apply rotation so width/height reflect rendered orientation (matches iOS)
+        val (width, height) = if (rotation == 90 || rotation == 270) rawHeight to rawWidth else rawWidth to rawHeight
         val codec = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_CODEC)
         val fileSize = if (uri.startsWith("file://")) File(uri.removePrefix("file://")).length() else 0L
+
+        // Frame rate: MediaExtractor reads the video track's KEY_FRAME_RATE which is set
+        // for all encoded videos (CAPTURE_FRAMERATE is only set for camera-captured ones).
+        var fps = 0f
+        val extractor = MediaExtractor()
+        try {
+          extractor.setDataSource(ctx, Uri.parse(uri), null)
+          for (i in 0 until extractor.trackCount) {
+            val format = extractor.getTrackFormat(i)
+            val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+            if (mime.startsWith("video/")) {
+              if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+                fps = try { format.getInteger(MediaFormat.KEY_FRAME_RATE).toFloat() }
+                      catch (_: Exception) { format.getFloat(MediaFormat.KEY_FRAME_RATE) }
+              }
+              break
+            }
+          }
+        } catch (_: Exception) {
+          // Fall back to CAPTURE_FRAMERATE (best effort)
+          fps = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)?.toFloat() ?: 0f
+        } finally {
+          extractor.release()
+        }
+
         promise.resolve(mapOf(
           "durationMs" to durationMs.toDouble(),
           "width" to width.toDouble(),
