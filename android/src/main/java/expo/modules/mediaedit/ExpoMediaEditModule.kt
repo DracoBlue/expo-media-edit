@@ -64,7 +64,11 @@ class ExpoMediaEditModule : Module() {
         } else {
           // Single-video fast path
           val firstItem = playlist?.firstOrNull() as? PlaylistItemConfig.VideoItem
-          val inputUri = Uri.parse(firstItem?.uri ?: return@Thread)
+          if (firstItem == null) {
+            promise.reject("INVALID_INPUT", "No valid video item in playlist", null)
+            return@Thread
+          }
+          val inputUri = Uri.parse(firstItem.uri)
           val singleJob = EditJob(
             outputUri = job.outputUri,
             trim = firstItem.trim,
