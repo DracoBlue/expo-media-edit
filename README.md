@@ -164,6 +164,19 @@ Always call `sub.remove()` after `editVideo()` resolves or rejects.
 
 Cancel an in-progress `editVideo()` call. The `editVideo` promise rejects with error code `"CANCELLED"`.
 
+### `extractAudio(uri: string): Promise<string>`
+
+Strip the audio track from a video file into a temporary `.m4a`. Returns a `file://` URI pointing to the extracted audio. Useful when feeding video to APIs that only accept raw audio formats — e.g. iOS `SFSpeechRecognizer` via `AVAudioFile`, which can't read `.MOV`/`.MP4` containers directly but reads the extracted `.m4a` fine.
+
+- **iOS:** `AVAssetExportSession` with `AVAssetExportPresetAppleM4A`.
+- **Android:** `MediaExtractor` + `MediaMuxer` (stream-copy, no re-encode).
+- Rejects with `NO_AUDIO_TRACK` if the source has no audio track.
+
+```ts
+const m4aUri = await extractAudio(videoUri);
+// pass m4aUri to whatever audio-only API needs it
+```
+
 ### `cleanTempFiles(): Promise<number>`
 
 Delete all temporary files created by expo-media-edit. Returns the number of files deleted.
