@@ -194,6 +194,23 @@ export async function generateThumbnail(
 }
 
 /**
+ * Extract the audio track from a video file into a temporary M4A file.
+ * Returns a file:// URI pointing to the extracted audio.
+ *
+ * Useful when feeding video to APIs that only read raw audio formats — e.g.
+ * iOS SFSpeechRecognizer via AVAudioFile, which can't read .MOV/.MP4 containers
+ * directly but happily reads the extracted .m4a.
+ *
+ * Rejects with `NO_AUDIO_TRACK` when the source has no audio.
+ */
+export async function extractAudio(uri: string): Promise<string> {
+  if (!uri || typeof uri !== 'string') {
+    throw new Error('extractAudio: uri is required and must be a non-empty string.');
+  }
+  return ExpoMediaEditModule.extractAudio(uri);
+}
+
+/**
  * Delete all temporary files created by expo-media-edit.
  * Returns the number of files deleted.
  */

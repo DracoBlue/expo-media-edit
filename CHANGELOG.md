@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-05-21
+
+### Added
+- **`extractAudio(uri)` → M4A file URI.** Strips the audio track from a video into an M4A file. Useful for feeding video to APIs that only accept raw audio formats — e.g. iOS `SFSpeechRecognizer` via `AVAudioFile`, which silently fails on `.MOV`/`.MP4` containers but reads the extracted `.m4a` fine.
+  - iOS: `AVAssetExportSession` with `AVAssetExportPresetAppleM4A`.
+  - Android: `MediaExtractor` + `MediaMuxer` (no re-encode; stream-copies the AAC track).
+  - Rejects with `NO_AUDIO_TRACK` if the source has no audio.
+
 ## [0.6.0] - 2026-05-21
 
 ### Fixed

@@ -164,6 +164,37 @@ public class ExpoMediaEditModule: Module {
       }
     }
 
+    AsyncFunction("extractAudio") { (uri: String, promise: Promise) in
+      guard let url = URL(string: uri) else {
+        promise.reject("INVALID_URI", "uri is not a valid URL")
+        return
+      }
+      let asset = AVAsset(url: url)
+      guard !asset.tracks(withMediaType: .audio).isEmpty else {
+        promise.reject("NO_AUDIO_TRACK", "Source has no audio track")
+        return
+      }
+      guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
+        promise.reject("EXPORT_INIT_FAILED", "Could not create AVAssetExportSession")
+        return
+      }
+      let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("expo-media-edit")
+      try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+      let outputURL = tempDir.appendingPathComponent(UUID().uuidString + ".m4a")
+      exporter.outputURL = outputURL
+      exporter.outputFileType = .m4a
+      exporter.exportAsynchronously {
+        switch exporter.status {
+        case .completed:
+          promise.resolve(outputURL.absoluteString)
+        case .failed, .cancelled:
+          promise.reject("EXTRACT_FAILED", exporter.error?.localizedDescription ?? "Audio extraction failed")
+        default:
+          promise.reject("EXTRACT_FAILED", "Unexpected exporter status: \(exporter.status.rawValue)")
+        }
+      }
+    }
+
     AsyncFunction("cleanTempFiles") { (promise: Promise) in
       let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("expo-media-edit")
       let files = try? FileManager.default.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil)

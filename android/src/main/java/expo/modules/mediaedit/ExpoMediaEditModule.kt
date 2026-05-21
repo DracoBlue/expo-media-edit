@@ -171,6 +171,57 @@ class ExpoMediaEditModule : Module() {
       }
     }
 
+    AsyncFunction("extractAudio") { uri: String, promise: Promise ->
+      val ctx = requireNotNull(appContext.reactContext)
+      Thread {
+        try {
+          val extractor = android.media.MediaExtractor()
+          extractor.setDataSource(ctx, Uri.parse(uri), null)
+          var audioTrack = -1
+          var audioFormat: MediaFormat? = null
+          for (i in 0 until extractor.trackCount) {
+            val format = extractor.getTrackFormat(i)
+            val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+            if (mime.startsWith("audio/")) {
+              audioTrack = i
+              audioFormat = format
+              break
+            }
+          }
+          if (audioTrack < 0 || audioFormat == null) {
+            extractor.release()
+            promise.reject("NO_AUDIO_TRACK", "Source has no audio track", null)
+            return@Thread
+          }
+          extractor.selectTrack(audioTrack)
+          val outputFile = createTempFile(ctx, "audio", ".m4a")
+          val muxer = android.media.MediaMuxer(outputFile.absolutePath, android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+          val muxAudioTrack = muxer.addTrack(audioFormat)
+          muxer.start()
+          val bufferSize = audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
+            .let { if (it > 0) it else 1024 * 1024 }
+          val buffer = java.nio.ByteBuffer.allocate(bufferSize)
+          val bufferInfo = android.media.MediaCodec.BufferInfo()
+          while (true) {
+            val sampleSize = extractor.readSampleData(buffer, 0)
+            if (sampleSize < 0) break
+            bufferInfo.offset = 0
+            bufferInfo.size = sampleSize
+            bufferInfo.presentationTimeUs = extractor.sampleTime
+            bufferInfo.flags = extractor.sampleFlags
+            muxer.writeSampleData(muxAudioTrack, buffer, bufferInfo)
+            extractor.advance()
+          }
+          muxer.stop()
+          muxer.release()
+          extractor.release()
+          promise.resolve("file://${outputFile.absolutePath}")
+        } catch (e: Exception) {
+          promise.reject("EXTRACT_FAILED", e.message ?: "Audio extraction failed", e)
+        }
+      }.start()
+    }
+
     AsyncFunction("cleanTempFiles") { promise: Promise ->
       val ctx = requireNotNull(appContext.reactContext)
       val tempDir = File(ctx.cacheDir, "expo-media-edit")
