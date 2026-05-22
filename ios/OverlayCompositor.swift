@@ -156,6 +156,11 @@ public class OverlayCompositor {
       textLayer.backgroundColor = bgColor.cgColor
     }
 
+    if opts.cornerRadius > 0 {
+      textLayer.cornerRadius = CGFloat(opts.cornerRadius) * scale
+      textLayer.masksToBounds = true
+    }
+
     applyTimingAnimation(to: textLayer, startMs: opts.startMs, endMs: opts.endMs, duration: duration)
 
     // Wrap in a container so rotation is applied around the text center

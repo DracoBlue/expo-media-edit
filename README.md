@@ -115,6 +115,7 @@ type OverlayItem =
       color?: string;         // CSS hex, e.g. '#FFFFFF'. Default: '#FFFFFF'
       fontWeight?: 'normal' | 'bold';
       backgroundColor?: string;
+      cornerRadius?: number;  // px at 1080-height reference; rounds the bg box. Default: 0
       rotation?: number;      // degrees, default 0
       startMs?: number;       // Show from this time (default: 0)
       endMs?: number;         // Hide after this time (default: video end)
@@ -212,6 +213,10 @@ Uses MediaCodec + MediaMuxer:
 - Android audio mixing does not support simultaneous multi-track volume scaling (original + music both at non-1.0 volume in the same output file). Each track is scaled independently.
 
 ## Changelog
+
+### 0.8.2
+
+- **New**: `TextOverlay.cornerRadius` (optional, px at 1080-height reference). When `backgroundColor` is set, the box is drawn with rounded corners. Defaults to `0` (sharp).
 
 ### 0.8.1
 

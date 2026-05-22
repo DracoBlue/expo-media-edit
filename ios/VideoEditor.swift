@@ -20,6 +20,7 @@ public struct TextOverlayOptions {
   let color: String
   let fontWeight: String
   let backgroundColor: String?
+  let cornerRadius: Double  // px at 1080-height reference, scaled like paddings
   let rotation: Double
   let startMs: Double?
   let endMs: Double?
@@ -133,6 +134,7 @@ public struct EditJobOptions {
             color: o["color"] as? String ?? "#FFFFFF",
             fontWeight: o["fontWeight"] as? String ?? "normal",
             backgroundColor: o["backgroundColor"] as? String,
+            cornerRadius: o["cornerRadius"] as? Double ?? 0,
             rotation: o["rotation"] as? Double ?? 0,
             startMs: o["startMs"] as? Double,
             endMs: o["endMs"] as? Double

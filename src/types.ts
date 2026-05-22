@@ -19,6 +19,8 @@ export type TextOverlay = {
   color?: string;
   fontWeight?: 'normal' | 'bold';
   backgroundColor?: string;
+  /** Corner radius for the background box, in pixels at the 1080-height reference. 0 = sharp corners. */
+  cornerRadius?: number;
   rotation?: number;  // degrees, default 0
   startMs?: number;
   endMs?: number;

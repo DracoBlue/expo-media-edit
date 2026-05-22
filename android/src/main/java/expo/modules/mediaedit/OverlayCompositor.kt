@@ -308,10 +308,15 @@ class OverlayCompositor(private val context: Context) {
           canvas.translate(originX, originY)
           if (opts.rotation != 0f) canvas.rotate(opts.rotation, layerWidth / 2f, layerHeight / 2f)
           opts.backgroundColor?.let { bgColorStr ->
-            val bgPaint = Paint().apply {
+            val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
               try { color = Color.parseColor(bgColorStr) } catch (_: Exception) { color = Color.TRANSPARENT }
             }
-            canvas.drawRect(0f, 0f, layerWidth, layerHeight, bgPaint)
+            val cornerR = opts.cornerRadius * (videoHeight / 1080f)
+            if (cornerR > 0f) {
+              canvas.drawRoundRect(0f, 0f, layerWidth, layerHeight, cornerR, cornerR, bgPaint)
+            } else {
+              canvas.drawRect(0f, 0f, layerWidth, layerHeight, bgPaint)
+            }
           }
           // Draw the text inside the padding box.
           canvas.translate(padX, padY)
