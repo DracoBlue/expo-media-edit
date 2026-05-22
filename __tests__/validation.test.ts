@@ -45,13 +45,19 @@ describe('editVideo validation', () => {
   });
 
   it('throws on out-of-bounds x', async () => {
-    await expect(editVideo({ inputUri: 'file:///v.mp4', overlays: [{ type: 'text', content: 'Hi', x: 1.5, y: 0 }] }))
+    await expect(editVideo({ inputUri: 'file:///v.mp4', overlays: [{ type: 'text', content: 'Hi', x: 1.5, y: 0, anchor: 'center', textAlign: 'center', paddingX: 0, paddingY: 0 }] }))
       .rejects.toThrow('x must be a number between 0.0 and 1.0');
   });
 
   it('throws on missing text content', async () => {
-    await expect(editVideo({ inputUri: 'file:///v.mp4', overlays: [{ type: 'text', content: '', x: 0, y: 0 }] }))
+    await expect(editVideo({ inputUri: 'file:///v.mp4', overlays: [{ type: 'text', content: '', x: 0, y: 0, anchor: 'center', textAlign: 'center', paddingX: 0, paddingY: 0 }] }))
       .rejects.toThrow('content is required');
+  });
+
+  it('throws when text overlay is missing anchor / textAlign / paddingX / paddingY', async () => {
+    // @ts-expect-error — missing required layout fields
+    await expect(editVideo({ inputUri: 'file:///v.mp4', overlays: [{ type: 'text', content: 'Hi', x: 0, y: 0 }] }))
+      .rejects.toThrow('must include anchor / textAlign / paddingX / paddingY');
   });
 
   it('throws on path traversal in image overlay URI', async () => {
@@ -88,14 +94,14 @@ describe('editVideo validation', () => {
   it('accepts valid text overlay with timing', async () => {
     await expect(editVideo({
       inputUri: 'file:///v.mp4',
-      overlays: [{ type: 'text', content: 'Hello', x: 0.1, y: 0.9, startMs: 0, endMs: 3000 }],
+      overlays: [{ type: 'text', content: 'Hello', x: 0.1, y: 0.9, anchor: 'topLeft', textAlign: 'left', paddingX: 12, paddingY: 6, startMs: 0, endMs: 3000 }],
     })).resolves.toBeTruthy();
   });
 
   it('throws when overlay startMs >= endMs', async () => {
     await expect(editVideo({
       inputUri: 'file:///v.mp4',
-      overlays: [{ type: 'text', content: 'Hi', x: 0, y: 0, startMs: 3000, endMs: 1000 }],
+      overlays: [{ type: 'text', content: 'Hi', x: 0, y: 0, anchor: 'topLeft', textAlign: 'left', paddingX: 0, paddingY: 0, startMs: 3000, endMs: 1000 }],
     })).rejects.toThrow('startMs must be less than endMs');
   });
 });

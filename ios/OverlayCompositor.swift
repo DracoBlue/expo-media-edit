@@ -107,21 +107,39 @@ public class OverlayCompositor {
       attributes: [.font: uiFont],
       context: nil
     )
-    let padH: CGFloat = fontSize * 0.5
-    let padV: CGFloat = fontSize * 0.25
+    // Scale paddings the same way fontSize is scaled (1080-height reference).
+    let scale = videoSize.height / 1080.0
+    let padH: CGFloat = CGFloat(opts.paddingX) * scale
+    let padV: CGFloat = CGFloat(opts.paddingY) * scale
     let layerWidth = ceil(measured.width) + padH * 2
     let layerHeight = ceil(measured.height) + padV * 2
 
-    // opts.x / opts.y are the CENTER of the layer in normalized coordinates.
     // CALayer Y is inverted: y=0 is bottom in Core Animation.
-    let xPos = CGFloat(opts.x) * videoSize.width - layerWidth / 2
-    let yPos = videoSize.height - (CGFloat(opts.y) * videoSize.height) - layerHeight / 2
+    // Anchor interpretation:
+    //   - "topLeft": (x, y) is the top-left corner of the layer.
+    //   - "center":  (x, y) is the geometric center of the layer.
+    let xPos: CGFloat
+    let yPos: CGFloat
+    if opts.anchor == "topLeft" {
+      xPos = CGFloat(opts.x) * videoSize.width
+      yPos = videoSize.height - CGFloat(opts.y) * videoSize.height - layerHeight
+    } else {
+      xPos = CGFloat(opts.x) * videoSize.width - layerWidth / 2
+      yPos = videoSize.height - (CGFloat(opts.y) * videoSize.height) - layerHeight / 2
+    }
+
+    let alignment: CATextLayerAlignmentMode
+    switch opts.textAlign {
+    case "left":  alignment = .left
+    case "right": alignment = .right
+    default:      alignment = .center
+    }
 
     let textLayer = CATextLayer()
     textLayer.string = opts.content
     textLayer.fontSize = fontSize
     textLayer.foregroundColor = UIColor(hexString: opts.color)?.cgColor ?? UIColor.white.cgColor
-    textLayer.alignmentMode = .center
+    textLayer.alignmentMode = alignment
     textLayer.isWrapped = true
     textLayer.contentsScale = UIScreen.main.scale
     textLayer.frame = CGRect(x: xPos, y: yPos, width: layerWidth, height: layerHeight)

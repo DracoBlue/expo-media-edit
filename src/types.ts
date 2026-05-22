@@ -3,6 +3,18 @@ export type TextOverlay = {
   content: string;
   x: number;
   y: number;
+  /**
+   * How `x`/`y` are interpreted relative to the rendered text layer.
+   * - `topLeft`: `x`/`y` mark the top-left corner of the layer.
+   * - `center`: `x`/`y` mark the geometric center of the layer.
+   */
+  anchor: 'topLeft' | 'center';
+  /** Alignment of text within the layer. */
+  textAlign: 'left' | 'center' | 'right';
+  /** Horizontal padding in pixels at a 1080-height reference. Scaled per platform like fontSize. */
+  paddingX: number;
+  /** Vertical padding in pixels at a 1080-height reference. Scaled per platform like fontSize. */
+  paddingY: number;
   fontSize?: number;
   color?: string;
   fontWeight?: 'normal' | 'bold';

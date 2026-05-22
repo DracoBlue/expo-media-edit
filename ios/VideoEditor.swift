@@ -12,6 +12,10 @@ public struct TextOverlayOptions {
   let content: String
   let x: Double
   let y: Double
+  let anchor: String        // "topLeft" | "center"
+  let textAlign: String     // "left" | "center" | "right"
+  let paddingX: Double      // px at 1080-height reference
+  let paddingY: Double      // px at 1080-height reference
   let fontSize: Double
   let color: String
   let fontWeight: String
@@ -110,10 +114,21 @@ public struct EditJobOptions {
       for o in overlayList {
         guard let type = o["type"] as? String else { continue }
         if type == "text", let content = o["content"] as? String {
+          // 0.8.0: anchor / textAlign / paddingX / paddingY are required — skip silently if missing.
+          guard let anchor = o["anchor"] as? String,
+                anchor == "topLeft" || anchor == "center",
+                let textAlign = o["textAlign"] as? String,
+                textAlign == "left" || textAlign == "center" || textAlign == "right",
+                let paddingX = o["paddingX"] as? Double,
+                let paddingY = o["paddingY"] as? Double else { continue }
           parsedOverlays.append(.text(TextOverlayOptions(
             content: content,
             x: o["x"] as? Double ?? 0,
             y: o["y"] as? Double ?? 0,
+            anchor: anchor,
+            textAlign: textAlign,
+            paddingX: paddingX,
+            paddingY: paddingY,
             fontSize: o["fontSize"] as? Double ?? 32,
             color: o["color"] as? String ?? "#FFFFFF",
             fontWeight: o["fontWeight"] as? String ?? "normal",

@@ -278,22 +278,43 @@ class OverlayCompositor(private val context: Context) {
             typeface = if (opts.fontWeight == "bold") Typeface.DEFAULT_BOLD else Typeface.DEFAULT
           }
           val maxWidth = (videoWidth * 0.9f).toInt()
+          val alignment = when (opts.textAlign) {
+            "center" -> Layout.Alignment.ALIGN_CENTER
+            "right"  -> Layout.Alignment.ALIGN_OPPOSITE
+            else     -> Layout.Alignment.ALIGN_NORMAL
+          }
           val layout = StaticLayout.Builder
             .obtain(opts.content, 0, opts.content.length, textPaint, maxWidth)
-            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setAlignment(alignment)
             .build()
-          val x = opts.x * videoWidth
-          val y = opts.y * videoHeight
+          // Scale paddings the same way fontSize is scaled (1080-height reference).
+          val scaleFactor = videoHeight / 1080f
+          val padX = opts.paddingX * scaleFactor
+          val padY = opts.paddingY * scaleFactor
+          // Layer dimensions include padding on both sides.
+          val layerWidth = layout.width + padX * 2f
+          val layerHeight = layout.height + padY * 2f
+          // Anchor: topLeft → (x, y) is top-left of layer; center → (x, y) is layer center.
+          val originX: Float
+          val originY: Float
+          if (opts.anchor == "topLeft") {
+            originX = opts.x * videoWidth
+            originY = opts.y * videoHeight
+          } else {
+            originX = opts.x * videoWidth - layerWidth / 2f
+            originY = opts.y * videoHeight - layerHeight / 2f
+          }
           canvas.save()
-          canvas.translate(x, y)
-          if (opts.rotation != 0f) canvas.rotate(opts.rotation, layout.width / 2f, layout.height / 2f)
+          canvas.translate(originX, originY)
+          if (opts.rotation != 0f) canvas.rotate(opts.rotation, layerWidth / 2f, layerHeight / 2f)
           opts.backgroundColor?.let { bgColorStr ->
             val bgPaint = Paint().apply {
               try { color = Color.parseColor(bgColorStr) } catch (_: Exception) { color = Color.TRANSPARENT }
             }
-            val pad = 8f
-            canvas.drawRect(-pad, -pad, layout.width + pad, layout.height + pad, bgPaint)
+            canvas.drawRect(0f, 0f, layerWidth, layerHeight, bgPaint)
           }
+          // Draw the text inside the padding box.
+          canvas.translate(padX, padY)
           layout.draw(canvas)
           canvas.restore()
         }

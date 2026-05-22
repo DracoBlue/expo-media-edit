@@ -19,6 +19,10 @@ data class TextOverlayItem(
   val content: String,
   val x: Float,
   val y: Float,
+  val anchor: String,        // "topLeft" | "center"
+  val textAlign: String,     // "left" | "center" | "right"
+  val paddingX: Float,       // px at 1080-height reference
+  val paddingY: Float,       // px at 1080-height reference
   val fontSize: Float,
   val color: String,
   val fontWeight: String,
@@ -94,10 +98,21 @@ data class EditJob(
         when (o["type"] as? String) {
           "text" -> {
             val content = o["content"] as? String ?: return@forEach
+            // 0.8.0: anchor / textAlign / paddingX / paddingY are required — skip silently if missing.
+            val anchor = o["anchor"] as? String ?: return@forEach
+            if (anchor != "topLeft" && anchor != "center") return@forEach
+            val textAlign = o["textAlign"] as? String ?: return@forEach
+            if (textAlign != "left" && textAlign != "center" && textAlign != "right") return@forEach
+            val paddingX = (o["paddingX"] as? Number)?.toFloat() ?: return@forEach
+            val paddingY = (o["paddingY"] as? Number)?.toFloat() ?: return@forEach
             overlays.add(OverlayItem.Text(TextOverlayItem(
               content = content,
               x = (o["x"] as? Number)?.toFloat() ?: 0f,
               y = (o["y"] as? Number)?.toFloat() ?: 0f,
+              anchor = anchor,
+              textAlign = textAlign,
+              paddingX = paddingX,
+              paddingY = paddingY,
               fontSize = (o["fontSize"] as? Number)?.toFloat() ?: 32f,
               color = o["color"] as? String ?: "#FFFFFF",
               fontWeight = o["fontWeight"] as? String ?: "normal",

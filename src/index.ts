@@ -79,6 +79,18 @@ function validateEditJob(job: EditJob): void {
         if (!overlay.content || typeof overlay.content !== 'string') {
           throw new Error(`editVideo: overlays[${i}].content is required for text overlays.`);
         }
+        if (overlay.anchor !== 'topLeft' && overlay.anchor !== 'center') {
+          throw new Error(`editVideo: overlays[${i}] must include anchor / textAlign / paddingX / paddingY (anchor must be 'topLeft' or 'center').`);
+        }
+        if (overlay.textAlign !== 'left' && overlay.textAlign !== 'center' && overlay.textAlign !== 'right') {
+          throw new Error(`editVideo: overlays[${i}] must include anchor / textAlign / paddingX / paddingY (textAlign must be 'left', 'center', or 'right').`);
+        }
+        if (typeof overlay.paddingX !== 'number') {
+          throw new Error(`editVideo: overlays[${i}] must include anchor / textAlign / paddingX / paddingY (paddingX must be a number).`);
+        }
+        if (typeof overlay.paddingY !== 'number') {
+          throw new Error(`editVideo: overlays[${i}] must include anchor / textAlign / paddingX / paddingY (paddingY must be a number).`);
+        }
       }
       if (overlay.type === 'image') {
         if (!overlay.uri || typeof overlay.uri !== 'string') {

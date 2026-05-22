@@ -69,7 +69,7 @@ export async function runIntegrationTests(): Promise<void> {
     inputUri: TEST_VIDEO_URL,
     trim: { startMs: 0, endMs: 3000 },
     quality: 'low',
-    overlays: [{ type: 'text', content: 'Test Overlay', x: 0.1, y: 0.8, fontSize: 40, color: '#FF0000', fontWeight: 'bold' }],
+    overlays: [{ type: 'text', content: 'Test Overlay', x: 0.1, y: 0.8, anchor: 'topLeft', textAlign: 'left', paddingX: 16, paddingY: 8, fontSize: 40, color: '#FF0000', fontWeight: 'bold' }],
   });
   console.assert(out2.startsWith('file://'), 'output must be a file:// URI');
   console.log(`    ✓ output: ${out2}`);

@@ -47,6 +47,10 @@ const outputUri = await editVideo({
       content: 'Hello World',
       x: 0.05,
       y: 0.85,
+      anchor: 'topLeft',
+      textAlign: 'left',
+      paddingX: 16,
+      paddingY: 8,
       fontSize: 48,
       color: '#FFFFFF',
       fontWeight: 'bold',
@@ -103,10 +107,15 @@ type OverlayItem =
       content: string;
       x: number;              // 0.0–1.0 relative to video width
       y: number;              // 0.0–1.0 relative to video height
+      anchor: 'topLeft' | 'center';        // how x/y are interpreted (required, 0.8.0)
+      textAlign: 'left' | 'center' | 'right'; // text alignment within the layer (required, 0.8.0)
+      paddingX: number;       // px at 1080-height reference; scaled like fontSize (required, 0.8.0)
+      paddingY: number;       // px at 1080-height reference; scaled like fontSize (required, 0.8.0)
       fontSize?: number;      // Default: 32
       color?: string;         // CSS hex, e.g. '#FFFFFF'. Default: '#FFFFFF'
       fontWeight?: 'normal' | 'bold';
       backgroundColor?: string;
+      rotation?: number;      // degrees, default 0
       startMs?: number;       // Show from this time (default: 0)
       endMs?: number;         // Hide after this time (default: video end)
     }
@@ -203,6 +212,26 @@ Uses MediaCodec + MediaMuxer:
 - Android audio mixing does not support simultaneous multi-track volume scaling (original + music both at non-1.0 volume in the same output file). Each track is scaled independently.
 
 ## Changelog
+
+### 0.8.0
+
+- **Breaking change — text overlays require explicit layout.** Every text overlay must now specify four fields the native side previously guessed: `anchor` (`'topLeft' | 'center'`), `textAlign` (`'left' | 'center' | 'right'`), `paddingX` (number), and `paddingY` (number). The native compositors always measure the rendered text and size the layer to `ceil(textWidth) + 2*paddingX` × `ceil(textHeight) + 2*paddingY`. `paddingX` / `paddingY` are in pixels at a 1080-height reference and scale per platform the same way `fontSize` does. With `anchor: 'topLeft'`, `x`/`y` are the layer's top-left corner; with `anchor: 'center'`, they are the layer's geometric center. The validator throws `editVideo: overlays[i] must include anchor / textAlign / paddingX / paddingY` if any field is missing.
+
+  ```ts
+  overlays: [
+    {
+      type: 'text',
+      content: 'Hello',
+      x: 0.5, y: 0.5,
+      anchor: 'center',
+      textAlign: 'center',
+      paddingX: 12,
+      paddingY: 6,
+      fontSize: 48,
+      backgroundColor: '#000000B3',
+    },
+  ]
+  ```
 
 ### 0.7.2
 
