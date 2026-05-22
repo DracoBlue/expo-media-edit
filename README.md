@@ -202,6 +202,16 @@ Uses MediaCodec + MediaMuxer:
 - Background processing is not supported (the app must stay in the foreground during editing).
 - Android audio mixing does not support simultaneous multi-track volume scaling (original + music both at non-1.0 volume in the same output file). Each track is scaled independently.
 
+## Changelog
+
+### 0.7.1
+
+- **iOS fix**: Time-ranged overlays (`startMs` / `endMs`) were never visible in the exported video. The opacity keyframe animation now sets `beginTime = AVCoreAnimationBeginTimeAtZero` so Core Animation maps it to composition time instead of `CACurrentMediaTime()`.
+
+### 0.7.0
+
+- `extractAudio(uri)` — exports the audio track of a video to an `.m4a` file.
+
 ## License
 
 MIT
