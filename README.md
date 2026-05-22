@@ -213,6 +213,10 @@ Uses MediaCodec + MediaMuxer:
 
 ## Changelog
 
+### 0.8.1
+
+- **iOS fix**: Time-ranged text/image overlays with both `startMs` and `endMs` stayed visible until the end of the video instead of disappearing at `endMs`. The opacity keyframe animation held the visible value past `endMs` because the third value in a discrete-mode `CAKeyframeAnimation` was still `opacity` instead of `0`. Critical for word-by-word subtitles where overlays accumulated on screen.
+
 ### 0.8.0
 
 - **Breaking change — text overlays require explicit layout.** Every text overlay must now specify four fields the native side previously guessed: `anchor` (`'topLeft' | 'center'`), `textAlign` (`'left' | 'center' | 'right'`), `paddingX` (number), and `paddingY` (number). The native compositors always measure the rendered text and size the layer to `ceil(textWidth) + 2*paddingX` × `ceil(textHeight) + 2*paddingY`. `paddingX` / `paddingY` are in pixels at a 1080-height reference and scale per platform the same way `fontSize` does. With `anchor: 'topLeft'`, `x`/`y` are the layer's top-left corner; with `anchor: 'center'`, they are the layer's geometric center. The validator throws `editVideo: overlays[i] must include anchor / textAlign / paddingX / paddingY` if any field is missing.

@@ -221,7 +221,9 @@ public class OverlayCompositor {
       NSNumber(value: end / totalDuration),
       1
     ]
-    animation.values = [0, layer.opacity, layer.opacity, 0]
+    // discrete mode: values[i] is held from keyTimes[i] until keyTimes[i+1].
+    // After endMs we want the layer hidden, so values[2] must be 0 (not opacity).
+    animation.values = [0, layer.opacity, 0, 0]
     animation.calculationMode = .discrete
     animation.isRemovedOnCompletion = false
     animation.fillMode = .both
