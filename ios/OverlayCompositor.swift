@@ -187,6 +187,9 @@ public class OverlayCompositor {
     animation.calculationMode = .discrete
     animation.isRemovedOnCompletion = false
     animation.fillMode = .both
+    // AVVideoCompositionCoreAnimationTool requires this special value so the
+    // animation references composition time, not CACurrentMediaTime().
+    animation.beginTime = AVCoreAnimationBeginTimeAtZero
     layer.add(animation, forKey: "timing")
     // Start hidden if there's a start offset
     if start > 0 { layer.opacity = 0 }
