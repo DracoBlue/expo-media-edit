@@ -204,6 +204,10 @@ Uses MediaCodec + MediaMuxer:
 
 ## Changelog
 
+### 0.7.2
+
+- **iOS text overlays — breaking change**: `x` and `y` are now the layer's **center**, not its top-left corner. The text layer is sized tightly to the rendered string (instead of a fixed 90%×8-line rectangle), so backgrounds wrap snugly around the text and `alignmentMode` is centered. Existing overlays at `x: 0.5, y: 0.5` are now visually centered instead of starting at the canvas midpoint.
+
 ### 0.7.1
 
 - **iOS fix**: Time-ranged overlays (`startMs` / `endMs`) were never visible in the exported video. The opacity keyframe animation now sets `beginTime = AVCoreAnimationBeginTimeAtZero` so Core Animation maps it to composition time instead of `CACurrentMediaTime()`.

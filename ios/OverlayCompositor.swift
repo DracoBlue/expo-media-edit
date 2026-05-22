@@ -93,24 +93,44 @@ public class OverlayCompositor {
   ) -> CALayer {
     // Scale fontSize consistently with Android (reference: 1080px height)
     let fontSize = CGFloat(opts.fontSize) * videoSize.height / 1080.0
-    let layerWidth = videoSize.width * 0.9
-    let layerHeight = fontSize * 8.0  // generous height for multi-line wrapping
+    let maxWidth = videoSize.width * 0.9
+    let isBold = opts.fontWeight == "bold"
+    let uiFont: UIFont = isBold
+      ? UIFont.boldSystemFont(ofSize: fontSize)
+      : UIFont.systemFont(ofSize: fontSize)
 
-    // CALayer Y is inverted: y=0 is bottom in Core Animation
-    let xPos = CGFloat(opts.x) * videoSize.width
-    let yPos = videoSize.height - (CGFloat(opts.y) * videoSize.height) - layerHeight
+    // Measure the rendered text so the layer (and its background) wraps tightly.
+    let nsText = opts.content as NSString
+    let measured = nsText.boundingRect(
+      with: CGSize(width: maxWidth, height: .greatestFiniteMagnitude),
+      options: [.usesLineFragmentOrigin, .usesFontLeading],
+      attributes: [.font: uiFont],
+      context: nil
+    )
+    let padH: CGFloat = fontSize * 0.5
+    let padV: CGFloat = fontSize * 0.25
+    let layerWidth = ceil(measured.width) + padH * 2
+    let layerHeight = ceil(measured.height) + padV * 2
+
+    // opts.x / opts.y are the CENTER of the layer in normalized coordinates.
+    // CALayer Y is inverted: y=0 is bottom in Core Animation.
+    let xPos = CGFloat(opts.x) * videoSize.width - layerWidth / 2
+    let yPos = videoSize.height - (CGFloat(opts.y) * videoSize.height) - layerHeight / 2
 
     let textLayer = CATextLayer()
     textLayer.string = opts.content
     textLayer.fontSize = fontSize
     textLayer.foregroundColor = UIColor(hexString: opts.color)?.cgColor ?? UIColor.white.cgColor
-    textLayer.alignmentMode = .left
+    textLayer.alignmentMode = .center
     textLayer.isWrapped = true
     textLayer.contentsScale = UIScreen.main.scale
     textLayer.frame = CGRect(x: xPos, y: yPos, width: layerWidth, height: layerHeight)
+    // Vertically center text inside the layer by nudging via padding only — CATextLayer
+    // draws from the top, so a tight layerHeight already centers because padV is applied
+    // both above and below.
 
-    if opts.fontWeight == "bold" {
-      textLayer.font = UIFont.boldSystemFont(ofSize: fontSize)
+    if isBold {
+      textLayer.font = uiFont
     }
 
     if let bgColorStr = opts.backgroundColor,
