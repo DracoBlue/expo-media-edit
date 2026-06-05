@@ -107,12 +107,15 @@ class ExpoMediaEditModule : Module() {
         val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toInt() ?: 0
         // Apply rotation so width/height reflect rendered orientation (matches iOS)
         val (width, height) = if (rotation == 90 || rotation == 270) rawHeight to rawWidth else rawWidth to rawHeight
-        val codec = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_CODEC)
         val fileSize = if (uri.startsWith("file://")) File(uri.removePrefix("file://")).length() else 0L
 
-        // Frame rate: MediaExtractor reads the video track's KEY_FRAME_RATE which is set
-        // for all encoded videos (CAPTURE_FRAMERATE is only set for camera-captured ones).
+        // Frame rate + codec: MediaExtractor reads the video track's KEY_FRAME_RATE
+        // (set for all encoded videos; CAPTURE_FRAMERATE is only set for camera-captured
+        // ones) and KEY_MIME (the encoded codec). Android's MediaMetadataRetriever has no
+        // codec field — iOS reads it from `CMFormatDescription`, we read the MIME here
+        // and map it to the same FourCC the iOS side returns.
         var fps = 0f
+        var codecMime: String? = null
         val extractor = MediaExtractor()
         try {
           extractor.setDataSource(ctx, Uri.parse(uri), null)
@@ -120,6 +123,7 @@ class ExpoMediaEditModule : Module() {
             val format = extractor.getTrackFormat(i)
             val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
             if (mime.startsWith("video/")) {
+              codecMime = mime
               if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
                 fps = try { format.getInteger(MediaFormat.KEY_FRAME_RATE).toFloat() }
                       catch (_: Exception) { format.getFloat(MediaFormat.KEY_FRAME_RATE) }
@@ -133,6 +137,7 @@ class ExpoMediaEditModule : Module() {
         } finally {
           extractor.release()
         }
+        val codec = mimeToFourCC(codecMime)
 
         promise.resolve(mapOf(
           "durationMs" to durationMs.toDouble(),
@@ -235,3 +240,20 @@ class ExpoMediaEditModule : Module() {
 }
 
 class CancellationException(message: String) : Exception(message)
+
+/**
+ * Maps an Android MediaFormat MIME string to the same FourCC the iOS side
+ * reports from `CMFormatDescription` so `getVideoInfo().codec` is the same
+ * shape on both platforms. Unknown MIME types pass through unchanged so
+ * callers can still log them; `null` propagates.
+ */
+private fun mimeToFourCC(mime: String?): String? = when (mime) {
+  null -> null
+  "video/avc" -> "avc1"
+  "video/hevc" -> "hvc1"
+  "video/x-vnd.on2.vp8" -> "vp08"
+  "video/x-vnd.on2.vp9" -> "vp09"
+  "video/av01" -> "av01"
+  "video/mp4v-es" -> "mp4v"
+  else -> mime
+}

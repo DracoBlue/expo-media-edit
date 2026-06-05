@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.1] - 2026-06-05
+
+### Fixed
+- **Android `getVideoInfo` no longer references a non-existent SDK constant.** `ExpoMediaEditModule.kt` previously read `MediaMetadataRetriever.METADATA_KEY_VIDEO_CODEC`, which doesn't exist in the Android SDK — the Kotlin compiler rejected the file. The codec is now read from the `MediaExtractor` track's `MediaFormat.KEY_MIME` (the same loop that already reads `KEY_FRAME_RATE`) and translated to the same FourCC string the iOS side returns via `CMFormatDescription`. New `mimeToFourCC` helper covers `avc1`/`hvc1`/`vp08`/`vp09`/`av01`/`mp4v`; unknown MIME types pass through unchanged.
+
 ## [0.9.0] - 2026-06-05
 
 ### Fixed
