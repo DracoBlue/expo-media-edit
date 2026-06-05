@@ -214,45 +214,7 @@ Uses MediaCodec + MediaMuxer:
 
 ## Changelog
 
-### 0.8.2
-
-- **New**: `TextOverlay.cornerRadius` (optional, px at 1080-height reference). When `backgroundColor` is set, the box is drawn with rounded corners. Defaults to `0` (sharp).
-
-### 0.8.1
-
-- **iOS fix**: Time-ranged text/image overlays with both `startMs` and `endMs` stayed visible until the end of the video instead of disappearing at `endMs`. The opacity keyframe animation held the visible value past `endMs` because the third value in a discrete-mode `CAKeyframeAnimation` was still `opacity` instead of `0`. Critical for word-by-word subtitles where overlays accumulated on screen.
-
-### 0.8.0
-
-- **Breaking change — text overlays require explicit layout.** Every text overlay must now specify four fields the native side previously guessed: `anchor` (`'topLeft' | 'center'`), `textAlign` (`'left' | 'center' | 'right'`), `paddingX` (number), and `paddingY` (number). The native compositors always measure the rendered text and size the layer to `ceil(textWidth) + 2*paddingX` × `ceil(textHeight) + 2*paddingY`. `paddingX` / `paddingY` are in pixels at a 1080-height reference and scale per platform the same way `fontSize` does. With `anchor: 'topLeft'`, `x`/`y` are the layer's top-left corner; with `anchor: 'center'`, they are the layer's geometric center. The validator throws `editVideo: overlays[i] must include anchor / textAlign / paddingX / paddingY` if any field is missing.
-
-  ```ts
-  overlays: [
-    {
-      type: 'text',
-      content: 'Hello',
-      x: 0.5, y: 0.5,
-      anchor: 'center',
-      textAlign: 'center',
-      paddingX: 12,
-      paddingY: 6,
-      fontSize: 48,
-      backgroundColor: '#000000B3',
-    },
-  ]
-  ```
-
-### 0.7.2
-
-- **iOS text overlays — breaking change**: `x` and `y` are now the layer's **center**, not its top-left corner. The text layer is sized tightly to the rendered string (instead of a fixed 90%×8-line rectangle), so backgrounds wrap snugly around the text and `alignmentMode` is centered. Existing overlays at `x: 0.5, y: 0.5` are now visually centered instead of starting at the canvas midpoint.
-
-### 0.7.1
-
-- **iOS fix**: Time-ranged overlays (`startMs` / `endMs`) were never visible in the exported video. The opacity keyframe animation now sets `beginTime = AVCoreAnimationBeginTimeAtZero` so Core Animation maps it to composition time instead of `CACurrentMediaTime()`.
-
-### 0.7.0
-
-- `extractAudio(uri)` — exports the audio track of a video to an `.m4a` file.
+See [CHANGELOG.md](./CHANGELOG.md).
 
 ## License
 

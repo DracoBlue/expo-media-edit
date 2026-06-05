@@ -2,6 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] - 2026-06-05
+
+### Fixed
+- **Android build configuration migrated to the modern Expo SDK 55 module pattern.** Previously `android/build.gradle` declared its own `buildscript` classpath for `kotlin-gradle-plugin:$kotlinVersion` (which resolved to an empty version when the host project hadn't pre-defined `kotlinVersion`) and used a bare `apply plugin: 'maven-publish'` (which fails on AGP 8+ with `SoftwareComponent with name 'release' not found`). The build now uses `applyKotlinExpoModulesCorePlugin()` + `useCoreDependencies()` + `useExpoPublishing()` — same pattern as other SDK-55 modules — and declares `namespace "expo.modules.mediaedit"` inside the `android {}` block. Adds `safeExtGet` so the root project can override `compileSdkVersion` / `minSdkVersion` / `targetSdkVersion` via `ext.*`. No source or API change on either platform.
+
+## [0.8.2] - 2026-05-22
+
+### Added
+- **`TextOverlay.cornerRadius`** (optional, px at 1080-height reference). When `backgroundColor` is set, the box is drawn with rounded corners. Defaults to `0` (sharp).
+
+## [0.8.1] - 2026-05-22
+
+### Fixed
+- **iOS time-ranged text/image overlays disappear at `endMs`.** Overlays with both `startMs` and `endMs` were staying visible until the end of the video instead of vanishing at `endMs`, because the opacity keyframe animation in a discrete-mode `CAKeyframeAnimation` held the visible value past `endMs` (the third value was still `opacity` instead of `0`). Critical for word-by-word subtitles where overlays accumulated on screen.
+
+## [0.8.0] - 2026-05-22
+
+### Changed
+- **Breaking — text overlays require explicit layout.** Every text overlay must now specify four fields the native side previously guessed: `anchor` (`'topLeft' | 'center'`), `textAlign` (`'left' | 'center' | 'right'`), `paddingX` (number), and `paddingY` (number). The native compositors always measure the rendered text and size the layer to `ceil(textWidth) + 2*paddingX` × `ceil(textHeight) + 2*paddingY`. `paddingX` / `paddingY` are in pixels at a 1080-height reference and scale per platform the same way `fontSize` does. With `anchor: 'topLeft'`, `x`/`y` are the layer's top-left corner; with `anchor: 'center'`, they are the layer's geometric center. The validator throws `editVideo: overlays[i] must include anchor / textAlign / paddingX / paddingY` if any field is missing.
+
+  ```ts
+  overlays: [
+    {
+      type: 'text',
+      content: 'Hello',
+      x: 0.5, y: 0.5,
+      anchor: 'center',
+      textAlign: 'center',
+      paddingX: 12,
+      paddingY: 6,
+      fontSize: 48,
+      backgroundColor: '#000000B3',
+    },
+  ]
+  ```
+
+## [0.7.2] - 2026-05-22
+
+### Changed
+- **Breaking — iOS text overlays: `x` and `y` are now the layer's center, not its top-left corner.** The text layer is sized tightly to the rendered string (instead of a fixed 90%×8-line rectangle), so backgrounds wrap snugly around the text and `alignmentMode` is centered. Existing overlays at `x: 0.5, y: 0.5` are now visually centered instead of starting at the canvas midpoint.
+
+## [0.7.1] - 2026-05-22
+
+### Fixed
+- **iOS time-ranged overlays (`startMs` / `endMs`) were never visible in the exported video.** The opacity keyframe animation now sets `beginTime = AVCoreAnimationBeginTimeAtZero` so Core Animation maps it to composition time instead of `CACurrentMediaTime()`.
+
 ## [0.7.0] - 2026-05-21
 
 ### Added

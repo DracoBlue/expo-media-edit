@@ -1,62 +1,42 @@
 apply plugin: 'com.android.library'
-apply plugin: 'kotlin-android'
-apply plugin: 'maven-publish'
 
 group = 'expo.modules.mediaedit'
-version = '0.1.0'
+version = '0.9.0'
 
-buildscript {
-  def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
-  if (expoModulesCorePlugin.exists()) {
-    apply from: expoModulesCorePlugin
-    applyKotlinExpoModulesCorePlugin()
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useExpoPublishing()
+
+// Manage the Android SDK versions ourselves rather than inheriting from
+// expo-modules-core, since we depend on min/target SDK ≥ 26 for the
+// media-edit APIs (MediaCodec async callbacks, ExoPlayer 2.x).
+def useManagedAndroidSdkVersions = false
+if (useManagedAndroidSdkVersions) {
+  useDefaultAndroidSdkVersions()
+} else {
+  buildscript {
+    ext.safeExtGet = { prop, fallback ->
+      rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+    }
   }
-
-  repositories {
-    mavenCentral()
-  }
-
-  dependencies {
-    classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
-  }
-}
-
-android {
-  compileSdkVersion safeExtGet("compileSdkVersion", 34)
-
-  defaultConfig {
-    minSdkVersion safeExtGet("minSdkVersion", 26)
-    targetSdkVersion safeExtGet("targetSdkVersion", 34)
-  }
-
-  lintOptions {
-    abortOnError false
-  }
-
-  compileOptions {
-    sourceCompatibility JavaVersion.VERSION_11
-    targetCompatibility JavaVersion.VERSION_11
-  }
-
-  kotlinOptions {
-    jvmTarget = JavaVersion.VERSION_11.toString()
-  }
-
-  sourceSets {
-    main {
-      java {
-        srcDirs += ['src/main/java']
-      }
+  project.android {
+    compileSdkVersion safeExtGet("compileSdkVersion", 34)
+    defaultConfig {
+      minSdkVersion safeExtGet("minSdkVersion", 26)
+      targetSdkVersion safeExtGet("targetSdkVersion", 34)
     }
   }
 }
 
-repositories {
-  mavenCentral()
-  google()
-}
-
-dependencies {
-  implementation project(':expo-modules-core')
-  implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:${kotlinVersion()}"
+android {
+  namespace "expo.modules.mediaedit"
+  defaultConfig {
+    versionCode 1
+    versionName "0.9.0"
+  }
+  lintOptions {
+    abortOnError false
+  }
 }
