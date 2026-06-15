@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [0.11.0] - 2026-06-15
 
+### Security
+
+URI validation that 0.10.0 added on the JS side is now enforced
+**natively** as well — the JS gate can be bypassed by calling the
+ExpoModule directly, so the native side becomes the source of truth.
+
+- iOS: new `MediaEditSecurity` enum with `isReadableURIAllowed(_:)` and
+  `isOutputURLAllowed(_:)`. Output URLs are canonicalized
+  (`standardizedFileURL.resolvingSymlinksInPath()`) and must resolve
+  inside one of: `tmp`, `Library/Caches`, `Documents`, `Application
+  Support`. Defeats absolute-path escapes that a plain `"../"`
+  substring check misses.
+- Android: new `isReadableUriAllowed(uri)` and
+  `resolveAllowedOutputFile(context, uri)` in `Utils.kt`. Output is
+  canonicalized (`File(path).canonicalPath`) and must be inside
+  `cacheDir`, `filesDir`, `getExternalFilesDir(null)`, or
+  `externalCacheDir`.
+- `getVideoInfo`, `generateThumbnail`, `extractAudio`, and the
+  `editVideo` output path now reject malformed input from the native
+  side before any work starts.
+- `android/build.gradle` was still on `0.10.0` after the previous
+  release — bumped along with `versionName` to match `package.json`.
+
 ### Added
 
 `TextOverlay` gains 9 optional fields so consumers can render the full preset

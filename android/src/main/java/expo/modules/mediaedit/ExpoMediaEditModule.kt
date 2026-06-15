@@ -25,9 +25,11 @@ class ExpoMediaEditModule : Module() {
       cancelRequested = false
 
       val outputFile = if (job.outputUri != null) {
-        val path = Uri.parse(job.outputUri).path
-          ?: throw IllegalArgumentException("outputUri path is null")
-        File(path)
+        resolveAllowedOutputFile(ctx, job.outputUri)
+          ?: run {
+            promise.reject("INVALID_OUTPUT", "outputUri must be a file:// path inside the app's sandbox", null)
+            return@AsyncFunction
+          }
       } else {
         createTempFile(ctx, "output", ".mp4")
       }
@@ -97,6 +99,10 @@ class ExpoMediaEditModule : Module() {
     }
 
     AsyncFunction("getVideoInfo") { uri: String, promise: Promise ->
+      if (!isReadableUriAllowed(uri)) {
+        promise.reject("INVALID_URI", "uri must be a file:// or https:// URI without path traversal", null)
+        return@AsyncFunction
+      }
       val ctx = requireNotNull(appContext.reactContext)
       val retriever = MediaMetadataRetriever()
       try {
@@ -153,6 +159,10 @@ class ExpoMediaEditModule : Module() {
     }
 
     AsyncFunction("generateThumbnail") { uri: String, timeMs: Double, options: Map<String, Any?>?, promise: Promise ->
+      if (!isReadableUriAllowed(uri)) {
+        promise.reject("INVALID_URI", "uri must be a file:// or https:// URI without path traversal", null)
+        return@AsyncFunction
+      }
       val ctx = requireNotNull(appContext.reactContext)
       val retriever = MediaMetadataRetriever()
       try {
@@ -177,6 +187,10 @@ class ExpoMediaEditModule : Module() {
     }
 
     AsyncFunction("extractAudio") { uri: String, promise: Promise ->
+      if (!isReadableUriAllowed(uri)) {
+        promise.reject("INVALID_URI", "uri must be a file:// or https:// URI without path traversal", null)
+        return@AsyncFunction
+      }
       val ctx = requireNotNull(appContext.reactContext)
       Thread {
         try {

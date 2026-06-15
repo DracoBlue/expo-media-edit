@@ -12,7 +12,11 @@ public class ExpoMediaEditModule: Module {
 
     AsyncFunction("editVideo") { (jobDict: [String: Any], promise: Promise) in
       let outputURL: URL
-      if let outputUriStr = jobDict["outputUri"] as? String, let url = URL(string: outputUriStr) {
+      if let outputUriStr = jobDict["outputUri"] as? String, !outputUriStr.isEmpty {
+        guard let url = URL(string: outputUriStr), MediaEditSecurity.isOutputURLAllowed(url) else {
+          promise.reject("INVALID_OUTPUT", "outputUri must be a file:// path inside the app's sandbox")
+          return
+        }
         outputURL = url
       } else {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("expo-media-edit")
@@ -92,6 +96,10 @@ public class ExpoMediaEditModule: Module {
     }
 
     AsyncFunction("getVideoInfo") { (uri: String, promise: Promise) in
+      guard MediaEditSecurity.isReadableURIAllowed(uri) else {
+        promise.reject("INVALID_URI", "uri must be a file:// or https:// URI without path traversal")
+        return
+      }
       guard let url = URL(string: uri) else {
         promise.reject("INVALID_URI", "uri is not a valid URL")
         return
@@ -134,6 +142,10 @@ public class ExpoMediaEditModule: Module {
     }
 
     AsyncFunction("generateThumbnail") { (uri: String, timeMs: Double, options: [String: Any]?, promise: Promise) in
+      guard MediaEditSecurity.isReadableURIAllowed(uri) else {
+        promise.reject("INVALID_URI", "uri must be a file:// or https:// URI without path traversal")
+        return
+      }
       guard let url = URL(string: uri) else {
         promise.reject("INVALID_URI", "uri is not a valid URL")
         return
@@ -165,6 +177,10 @@ public class ExpoMediaEditModule: Module {
     }
 
     AsyncFunction("extractAudio") { (uri: String, promise: Promise) in
+      guard MediaEditSecurity.isReadableURIAllowed(uri) else {
+        promise.reject("INVALID_URI", "uri must be a file:// or https:// URI without path traversal")
+        return
+      }
       guard let url = URL(string: uri) else {
         promise.reject("INVALID_URI", "uri is not a valid URL")
         return
