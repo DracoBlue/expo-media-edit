@@ -86,6 +86,66 @@ public class OverlayCompositor {
     return videoComposition
   }
 
+  /// Pick a UIFont from (weight, style, family). Italic is approximated
+  /// by composing `.italic` symbolic traits onto whichever base font we
+  /// picked — the system / monospace / bold variants all support it via
+  /// their UIFontDescriptor.
+  private static func resolveFont(
+    fontSize: CGFloat,
+    weight: String,
+    style: String,
+    family: String
+  ) -> UIFont {
+    let isBold = weight == "bold"
+    let isItalic = style == "italic"
+    let isMono = family == "monospace"
+
+    let base: UIFont
+    if isMono {
+      base = UIFont.monospacedSystemFont(ofSize: fontSize, weight: isBold ? .bold : .regular)
+    } else if isBold {
+      base = UIFont.boldSystemFont(ofSize: fontSize)
+    } else {
+      base = UIFont.systemFont(ofSize: fontSize)
+    }
+    if !isItalic { return base }
+    let desc = base.fontDescriptor.withSymbolicTraits(
+      base.fontDescriptor.symbolicTraits.union(.traitItalic)
+    )
+    if let desc = desc {
+      return UIFont(descriptor: desc, size: fontSize)
+    }
+    return base
+  }
+
+  /// Build the attribute dict for an NSAttributedString text layer.
+  /// Stroke is expressed as a NEGATIVE strokeWidth so Core Text fills
+  /// AND strokes the glyphs (positive would draw stroke-only). Stroke
+  /// is in percent of font size per Apple docs — convert our 1080-ref
+  /// pixel width to that scale.
+  private static func textAttributes(
+    font: UIFont,
+    color: UIColor,
+    opts: TextOverlayOptions
+  ) -> [NSAttributedString.Key: Any] {
+    var attrs: [NSAttributedString.Key: Any] = [
+      .font: font,
+      .foregroundColor: color,
+    ]
+    if let strokeStr = opts.strokeColor,
+       let strokeColor = UIColor(hexString: strokeStr),
+       opts.strokeWidth > 0 {
+      // NSAttributedString.strokeWidth is in PERCENT of font size.
+      // Convert from a 1080-ref pixel width: scale was already applied
+      // to font size, so we compute percent against the on-screen font.
+      let pxStroke = opts.strokeWidth // already in 1080-ref px
+      let percent = -(pxStroke / Double(font.pointSize)) * 100.0
+      attrs[.strokeColor] = strokeColor
+      attrs[.strokeWidth] = percent
+    }
+    return attrs
+  }
+
   private static func buildTextLayer(
     opts: TextOverlayOptions,
     videoSize: CGSize,
@@ -94,30 +154,46 @@ public class OverlayCompositor {
     // Scale fontSize consistently with Android (reference: 1080px height)
     let fontSize = CGFloat(opts.fontSize) * videoSize.height / 1080.0
     let maxWidth = videoSize.width * 0.9
-    let isBold = opts.fontWeight == "bold"
-    let uiFont: UIFont = isBold
-      ? UIFont.boldSystemFont(ofSize: fontSize)
-      : UIFont.systemFont(ofSize: fontSize)
-
-    // Measure the rendered text so the layer (and its background) wraps tightly.
-    let nsText = opts.content as NSString
-    let measured = nsText.boundingRect(
-      with: CGSize(width: maxWidth, height: .greatestFiniteMagnitude),
-      options: [.usesLineFragmentOrigin, .usesFontLeading],
-      attributes: [.font: uiFont],
-      context: nil
-    )
-    // Scale paddings the same way fontSize is scaled (1080-height reference).
     let scale = videoSize.height / 1080.0
     let padH: CGFloat = CGFloat(opts.paddingX) * scale
     let padV: CGFloat = CGFloat(opts.paddingY) * scale
+
+    let uiFont = resolveFont(
+      fontSize: fontSize,
+      weight: opts.fontWeight,
+      style: opts.fontStyle,
+      family: opts.fontFamily
+    )
+    let fgColor = UIColor(hexString: opts.color) ?? .white
+
+    // Build an attributed string that captures color, stroke, and
+    // optional per-substring highlight in one shot. Using
+    // NSAttributedString throughout unlocks features CATextLayer cannot
+    // express via its plain-string path.
+    let attributed = NSMutableAttributedString(
+      string: opts.content,
+      attributes: textAttributes(font: uiFont, color: fgColor, opts: opts)
+    )
+    if let hlWord = opts.highlightWord, !hlWord.isEmpty,
+       let hlColorStr = opts.highlightColor,
+       let hlColor = UIColor(hexString: hlColorStr) {
+      let range = (opts.content as NSString).range(of: hlWord)
+      if range.location != NSNotFound {
+        attributed.addAttribute(.foregroundColor, value: hlColor, range: range)
+      }
+    }
+
+    // Measure using the same attributes so wrapping math stays correct
+    // when we add italic / monospace fonts.
+    let measured = attributed.boundingRect(
+      with: CGSize(width: maxWidth, height: .greatestFiniteMagnitude),
+      options: [.usesLineFragmentOrigin, .usesFontLeading],
+      context: nil
+    )
     let layerWidth = ceil(measured.width) + padH * 2
     let layerHeight = ceil(measured.height) + padV * 2
 
     // CALayer Y is inverted: y=0 is bottom in Core Animation.
-    // Anchor interpretation:
-    //   - "topLeft": (x, y) is the top-left corner of the layer.
-    //   - "center":  (x, y) is the geometric center of the layer.
     let xPos: CGFloat
     let yPos: CGFloat
     if opts.anchor == "topLeft" {
@@ -136,20 +212,11 @@ public class OverlayCompositor {
     }
 
     let textLayer = CATextLayer()
-    textLayer.string = opts.content
-    textLayer.fontSize = fontSize
-    textLayer.foregroundColor = UIColor(hexString: opts.color)?.cgColor ?? UIColor.white.cgColor
+    textLayer.string = attributed
     textLayer.alignmentMode = alignment
     textLayer.isWrapped = true
     textLayer.contentsScale = UIScreen.main.scale
     textLayer.frame = CGRect(x: xPos, y: yPos, width: layerWidth, height: layerHeight)
-    // Vertically center text inside the layer by nudging via padding only — CATextLayer
-    // draws from the top, so a tight layerHeight already centers because padV is applied
-    // both above and below.
-
-    if isBold {
-      textLayer.font = uiFont
-    }
 
     if let bgColorStr = opts.backgroundColor,
        let bgColor = UIColor(hexString: bgColorStr) {
@@ -159,6 +226,21 @@ public class OverlayCompositor {
     if opts.cornerRadius > 0 {
       textLayer.cornerRadius = CGFloat(opts.cornerRadius) * scale
       textLayer.masksToBounds = true
+    }
+
+    // 0.11.0 — soft halo. CALayer's shadow draws OUTSIDE the layer
+    // bounds, so it bleeds tastefully into the surrounding video.
+    // masksToBounds (used by cornerRadius) clips the shadow, so when
+    // both are requested we forfeit the corner-radius clipping. The
+    // text-stroke happens inside the layer so it's unaffected.
+    if let shadowStr = opts.shadowColor,
+       let shadow = UIColor(hexString: shadowStr),
+       opts.shadowRadius > 0 {
+      textLayer.shadowColor = shadow.cgColor
+      textLayer.shadowRadius = CGFloat(opts.shadowRadius) * scale
+      textLayer.shadowOpacity = Float(max(0, min(1, opts.shadowOpacity)))
+      textLayer.shadowOffset = .zero
+      if opts.cornerRadius > 0 { textLayer.masksToBounds = false }
     }
 
     applyTimingAnimation(to: textLayer, startMs: opts.startMs, endMs: opts.endMs, duration: duration)

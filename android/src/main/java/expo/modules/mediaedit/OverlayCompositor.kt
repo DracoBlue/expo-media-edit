@@ -4,8 +4,11 @@ import android.content.Context
 import android.graphics.*
 import android.media.*
 import android.text.Layout
+import android.text.SpannableString
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.style.ForegroundColorSpan
 import java.io.File
 import java.nio.ByteBuffer
 
@@ -266,17 +269,86 @@ class OverlayCompositor(private val context: Context) {
     return yuv
   }
 
+  private fun parseColorOrDefault(s: String?, default: Int): Int {
+    if (s == null) return default
+    return try { Color.parseColor(s) } catch (_: Exception) { default }
+  }
+
+  /**
+   * Pick the system Typeface from (family, weight, style). Italic
+   * composes with the chosen base via Typeface.create(base, style)
+   * so monospace + italic + bold all stack.
+   */
+  private fun resolveTypeface(family: String, weight: String, style: String): Typeface {
+    val base = if (family == "monospace") Typeface.MONOSPACE else Typeface.DEFAULT
+    val isBold = weight == "bold"
+    val isItalic = style == "italic"
+    val styleInt = when {
+      isBold && isItalic -> Typeface.BOLD_ITALIC
+      isBold             -> Typeface.BOLD
+      isItalic           -> Typeface.ITALIC
+      else               -> Typeface.NORMAL
+    }
+    return Typeface.create(base, styleInt)
+  }
+
+  /**
+   * Build a SpannableString that paints the FIRST occurrence of
+   * `highlightWord` in `highlightColor` while the rest stays default.
+   * No-op if either field is missing or the substring isn't found.
+   */
+  private fun buildSpannable(opts: TextOverlayItem): SpannableString {
+    val spannable = SpannableString(opts.content)
+    val word = opts.highlightWord ?: return spannable
+    val colorStr = opts.highlightColor ?: return spannable
+    if (word.isEmpty()) return spannable
+    val idx = opts.content.indexOf(word)
+    if (idx < 0) return spannable
+    val color = parseColorOrDefault(colorStr, Color.YELLOW)
+    spannable.setSpan(
+      ForegroundColorSpan(color),
+      idx,
+      idx + word.length,
+      Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+    )
+    return spannable
+  }
+
   internal fun drawOverlays(canvas: Canvas, overlays: List<OverlayItem>, frameTimeMs: Long, videoWidth: Int, videoHeight: Int) {
     for (overlay in overlays) {
       when (overlay) {
         is OverlayItem.Text -> {
           val opts = overlay.opts
           if (frameTimeMs < (opts.startMs ?: 0L) || frameTimeMs > (opts.endMs ?: Long.MAX_VALUE)) continue
-          val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            try { color = Color.parseColor(opts.color) } catch (_: Exception) { color = Color.WHITE }
-            textSize = opts.fontSize * (videoHeight / 1080f)
-            typeface = if (opts.fontWeight == "bold") Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+          val scaleFactor = videoHeight / 1080f
+          val fontPx = opts.fontSize * scaleFactor
+
+          val baseTypeface = resolveTypeface(opts.fontFamily, opts.fontWeight, opts.fontStyle)
+          // 0.11.0 — Spannable lets us paint the optional highlightWord
+          // in highlightColor while the rest of the text stays in color.
+          val spannable = buildSpannable(opts)
+
+          val baseColor = parseColorOrDefault(opts.color, Color.WHITE)
+          val fillPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = baseColor
+            textSize = fontPx
+            typeface = baseTypeface
+            style = Paint.Style.FILL
           }
+          // 0.11.0 — soft halo. Android Paint shadows draw INSIDE the
+          // glyph bounds (unlike iOS' CALayer shadow which is layer-
+          // level), so they bleed gently around each character.
+          if (opts.shadowColor != null && opts.shadowRadius > 0f) {
+            val sc = parseColorOrDefault(opts.shadowColor, Color.BLACK)
+            val sr = (opts.shadowRadius * scaleFactor).coerceAtLeast(0.1f)
+            val opacity = opts.shadowOpacity.coerceIn(0f, 1f)
+            val tintedColor = Color.argb(
+              (Color.alpha(sc) * opacity).toInt(),
+              Color.red(sc), Color.green(sc), Color.blue(sc)
+            )
+            fillPaint.setShadowLayer(sr, 0f, 0f, tintedColor)
+          }
+
           val maxWidth = (videoWidth * 0.9f).toInt()
           val alignment = when (opts.textAlign) {
             "center" -> Layout.Alignment.ALIGN_CENTER
@@ -284,17 +356,13 @@ class OverlayCompositor(private val context: Context) {
             else     -> Layout.Alignment.ALIGN_NORMAL
           }
           val layout = StaticLayout.Builder
-            .obtain(opts.content, 0, opts.content.length, textPaint, maxWidth)
+            .obtain(spannable, 0, spannable.length, fillPaint, maxWidth)
             .setAlignment(alignment)
             .build()
-          // Scale paddings the same way fontSize is scaled (1080-height reference).
-          val scaleFactor = videoHeight / 1080f
           val padX = opts.paddingX * scaleFactor
           val padY = opts.paddingY * scaleFactor
-          // Layer dimensions include padding on both sides.
           val layerWidth = layout.width + padX * 2f
           val layerHeight = layout.height + padY * 2f
-          // Anchor: topLeft → (x, y) is top-left of layer; center → (x, y) is layer center.
           val originX: Float
           val originY: Float
           if (opts.anchor == "topLeft") {
@@ -309,17 +377,34 @@ class OverlayCompositor(private val context: Context) {
           if (opts.rotation != 0f) canvas.rotate(opts.rotation, layerWidth / 2f, layerHeight / 2f)
           opts.backgroundColor?.let { bgColorStr ->
             val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-              try { color = Color.parseColor(bgColorStr) } catch (_: Exception) { color = Color.TRANSPARENT }
+              color = parseColorOrDefault(bgColorStr, Color.TRANSPARENT)
             }
-            val cornerR = opts.cornerRadius * (videoHeight / 1080f)
+            val cornerR = opts.cornerRadius * scaleFactor
             if (cornerR > 0f) {
               canvas.drawRoundRect(0f, 0f, layerWidth, layerHeight, cornerR, cornerR, bgPaint)
             } else {
               canvas.drawRect(0f, 0f, layerWidth, layerHeight, bgPaint)
             }
           }
-          // Draw the text inside the padding box.
           canvas.translate(padX, padY)
+          // 0.11.0 — stroke pass first (paint underneath the fill).
+          // We re-build the same layout with a stroke-only paint so the
+          // outline aligns pixel-perfect with the fill.
+          if (opts.strokeColor != null && opts.strokeWidth > 0f) {
+            val strokePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+              color = parseColorOrDefault(opts.strokeColor, Color.BLACK)
+              textSize = fontPx
+              typeface = baseTypeface
+              style = Paint.Style.STROKE
+              strokeWidth = opts.strokeWidth * scaleFactor
+              strokeJoin = Paint.Join.ROUND
+            }
+            val strokeLayout = StaticLayout.Builder
+              .obtain(spannable, 0, spannable.length, strokePaint, maxWidth)
+              .setAlignment(alignment)
+              .build()
+            strokeLayout.draw(canvas)
+          }
           layout.draw(canvas)
           canvas.restore()
         }

@@ -2,6 +2,84 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0] - 2026-06-15
+
+### Added
+
+`TextOverlay` gains 9 optional fields so consumers can render the full preset
+library of subtitle/caption styles you see in modern mobile editors
+(CapCut/Videoleap/Canva/Mojo/VITA) without baking style names into the
+library.
+
+- `strokeColor` + `strokeWidth` — outline. `strokeWidth` is in 1080-ref pixels
+  and scaled like `fontSize`. iOS renders via `NSAttributedString` with a
+  negative `strokeWidth` (fill+stroke); Android does a stroke-only paint pass
+  first, then the fill, so the outline aligns pixel-perfect.
+- `shadowColor` + `shadowRadius` + `shadowOpacity` — soft halo. iOS uses
+  `CALayer.shadow*` (clips the corner-radius mask when both are set);
+  Android uses `Paint.setShadowLayer` (the halo draws inside the glyph bounds
+  rather than around the layer, which gives a different feel — both are
+  intentional for their platform's idiom).
+- `fontStyle: 'normal' | 'italic'` — iOS composes `.traitItalic` onto the
+  current font descriptor so italic stacks with bold and with monospace;
+  Android uses `Typeface.create(base, ITALIC)`.
+- `fontFamily: 'system' | 'monospace'` — iOS `UIFont.monospacedSystemFont`,
+  Android `Typeface.MONOSPACE`.
+- `highlightWord` + `highlightColor` — repaint the FIRST occurrence of the
+  substring in a different color (case-sensitive exact match). Built for
+  karaoke-style word-by-word captions where the active word needs to pop.
+  iOS uses `NSAttributedString` with a `.foregroundColor` attribute on the
+  range; Android uses a `SpannableString` with `ForegroundColorSpan`.
+
+All new fields are optional — overlays from 0.10.0 callers render identically.
+
+### Internal
+
+- iOS `OverlayCompositor.buildTextLayer` now drives an `NSAttributedString`
+  throughout (was a raw `String`). The plain-string path was dropped — the
+  attributed path renders the same when no new fields are set.
+- Two iOS helpers extracted: `resolveFont(weight, style, family)` and
+  `textAttributes(font, color, opts)`.
+- Two Android helpers extracted: `resolveTypeface(family, weight, style)` and
+  `buildSpannable(opts)`, plus a `parseColorOrDefault` wrapper that the
+  text and background paint paths now share.
+- +6 JS-side validation tests for the new optional fields.
+
+## [0.10.0] - 2026-06-12
+
+### Security
+
+This release hardens URI handling. All checks are enforced on the **native** side
+(Swift/Kotlin) as the source of truth — the JS validation is convenience only and
+can be bypassed by calling the native module directly.
+
+- **`outputUri` is now validated and confined to the app sandbox.** Previously
+  `outputUri` was passed through unchecked on both platforms. Because the export
+  path is deleted before writing (iOS `removeItem`, Android `outputFile.delete()`
+  on cancel/error) and then overwritten, a `file://` (or scheme-less) path could be
+  used to **overwrite or delete an arbitrary file** the app had access to. The path
+  is now canonicalized and must resolve inside one of the app's writable directories
+  (iOS: temp / caches / documents / application-support; Android: `cacheDir` /
+  `filesDir` / external files / external cache). Otherwise the call rejects with
+  `INVALID_OUTPUT`.
+- **`getVideoInfo`, `generateThumbnail`, and `extractAudio` now validate their `uri`.**
+  These three accepted any string and passed it straight to `AVAsset` /
+  `MediaMetadataRetriever` / `MediaExtractor`, allowing reads of arbitrary local
+  files (absolute `file:///…`) and, on Android, `content://` providers of other
+  apps. They now require a `file://` or `https://` URI without traversal and reject
+  with `INVALID_URI`.
+- **Path-traversal protection no longer relies on the `../` substring alone.** An
+  absolute path such as `file:///data/data/<app>/databases/x` contains no `../` and
+  previously slipped through. Output paths are now checked against an allowlist after
+  canonicalization (`URL.standardizedFileURL.resolvingSymlinksInPath` /
+  `File.canonicalPath`), which also defeats symlink escapes.
+- **`http://` is no longer accepted; only `file://` and `https://` are.** The TS
+  layer previously allowed cleartext `http://` for input/overlay/audio URIs while the
+  native side already rejected it for most fields — the layers are now consistent.
+  This is a behavioral breaking change for anyone passing `http://` URIs; switch to
+  `https://`.
+- Null-byte (`\0`) injection is now rejected in all URIs.
+
 ## [0.9.1] - 2026-06-05
 
 ### Fixed

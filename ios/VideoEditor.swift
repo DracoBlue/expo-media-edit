@@ -19,8 +19,20 @@ public struct TextOverlayOptions {
   let fontSize: Double
   let color: String
   let fontWeight: String
+  let fontStyle: String     // "normal" | "italic" — 0.11.0
+  let fontFamily: String    // "system" | "monospace" — 0.11.0
   let backgroundColor: String?
   let cornerRadius: Double  // px at 1080-height reference, scaled like paddings
+  // 0.11.0 — optional outline (both required to render)
+  let strokeColor: String?
+  let strokeWidth: Double   // 0 = no stroke
+  // 0.11.0 — optional soft halo (color + radius required to render)
+  let shadowColor: String?
+  let shadowRadius: Double  // 0 = no shadow
+  let shadowOpacity: Double // 0..1
+  // 0.11.0 — first-occurrence substring highlight (both required to render)
+  let highlightWord: String?
+  let highlightColor: String?
   let rotation: Double
   let startMs: Double?
   let endMs: Double?
@@ -133,8 +145,17 @@ public struct EditJobOptions {
             fontSize: o["fontSize"] as? Double ?? 32,
             color: o["color"] as? String ?? "#FFFFFF",
             fontWeight: o["fontWeight"] as? String ?? "normal",
+            fontStyle: o["fontStyle"] as? String ?? "normal",
+            fontFamily: o["fontFamily"] as? String ?? "system",
             backgroundColor: o["backgroundColor"] as? String,
             cornerRadius: o["cornerRadius"] as? Double ?? 0,
+            strokeColor: o["strokeColor"] as? String,
+            strokeWidth: o["strokeWidth"] as? Double ?? 0,
+            shadowColor: o["shadowColor"] as? String,
+            shadowRadius: o["shadowRadius"] as? Double ?? 0,
+            shadowOpacity: o["shadowOpacity"] as? Double ?? 1,
+            highlightWord: o["highlightWord"] as? String,
+            highlightColor: o["highlightColor"] as? String,
             rotation: o["rotation"] as? Double ?? 0,
             startMs: o["startMs"] as? Double,
             endMs: o["endMs"] as? Double
@@ -157,7 +178,7 @@ public struct EditJobOptions {
     overlays = parsedOverlays
 
     if let audioDict = dict["audio"] as? [String: Any], let uri = audioDict["uri"] as? String {
-      guard !uri.contains("../") else { audio = nil; playlist = nil; return }
+      guard !uri.contains("../"), uri.hasPrefix("file://") || uri.hasPrefix("https://") else { audio = nil; playlist = nil; return }
       audio = AudioMixOptions(
         uri: uri,
         volume: audioDict["volume"] as? Double ?? 1.0,

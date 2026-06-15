@@ -4,11 +4,29 @@ import ExpoMediaEditModule, { emitter } from './ExpoMediaEditModule';
 import type { EditJob, VideoInfo, ThumbnailOptions, ProgressEvent, PlaylistItem } from './types';
 
 function validateUri(uri: string, label: string): void {
+  if (uri.includes('\0')) {
+    throw new Error(`${label} must not contain null bytes.`);
+  }
   if (uri.includes('../')) {
     throw new Error(`${label} must not contain path traversal sequences.`);
   }
-  if (!uri.startsWith('file://') && !uri.startsWith('https://') && !uri.startsWith('http://')) {
+  if (!uri.startsWith('file://') && !uri.startsWith('https://')) {
     throw new Error(`${label} must be a file:// or https:// URI.`);
+  }
+}
+
+// Output is written (and may overwrite/delete an existing file), so it must be a
+// local file:// URI. The native side additionally confirms the resolved path stays
+// inside the app's writable sandbox directories — this is only the syntactic gate.
+function validateOutputUri(uri: string, label: string): void {
+  if (uri.includes('\0')) {
+    throw new Error(`${label} must not contain null bytes.`);
+  }
+  if (uri.includes('../')) {
+    throw new Error(`${label} must not contain path traversal sequences.`);
+  }
+  if (!uri.startsWith('file://')) {
+    throw new Error(`${label} must be a file:// URI.`);
   }
 }
 
@@ -46,6 +64,12 @@ function validateEditJob(job: EditJob): void {
 
   if (!hasPlaylist && !hasInputUri) {
     throw new Error('editVideo: either inputUri or playlist is required.');
+  }
+  if (typeof job.outputUri === 'string' && job.outputUri.trim() !== '') {
+    validateOutputUri(job.outputUri, 'editVideo: outputUri');
+  }
+  if (hasInputUri) {
+    validateUri(job.inputUri!, 'editVideo: inputUri');
   }
   if (hasPlaylist) {
     for (let i = 0; i < job.playlist!.length; i++) {
@@ -90,6 +114,23 @@ function validateEditJob(job: EditJob): void {
         }
         if (typeof overlay.paddingY !== 'number') {
           throw new Error(`editVideo: overlays[${i}] must include anchor / textAlign / paddingX / paddingY (paddingY must be a number).`);
+        }
+        // 0.11.0 optional knobs — validate range / type but keep
+        // missing values silent (every new field is optional).
+        if (overlay.fontStyle !== undefined && overlay.fontStyle !== 'normal' && overlay.fontStyle !== 'italic') {
+          throw new Error(`editVideo: overlays[${i}].fontStyle must be 'normal' or 'italic'.`);
+        }
+        if (overlay.fontFamily !== undefined && overlay.fontFamily !== 'system' && overlay.fontFamily !== 'monospace') {
+          throw new Error(`editVideo: overlays[${i}].fontFamily must be 'system' or 'monospace'.`);
+        }
+        if (overlay.strokeWidth !== undefined && (typeof overlay.strokeWidth !== 'number' || overlay.strokeWidth < 0)) {
+          throw new Error(`editVideo: overlays[${i}].strokeWidth must be a non-negative number.`);
+        }
+        if (overlay.shadowRadius !== undefined && (typeof overlay.shadowRadius !== 'number' || overlay.shadowRadius < 0)) {
+          throw new Error(`editVideo: overlays[${i}].shadowRadius must be a non-negative number.`);
+        }
+        if (overlay.shadowOpacity !== undefined && (typeof overlay.shadowOpacity !== 'number' || overlay.shadowOpacity < 0 || overlay.shadowOpacity > 1)) {
+          throw new Error(`editVideo: overlays[${i}].shadowOpacity must be a number between 0.0 and 1.0.`);
         }
       }
       if (overlay.type === 'image') {
@@ -184,6 +225,7 @@ export async function getVideoInfo(uri: string): Promise<VideoInfo> {
   if (!uri || typeof uri !== 'string') {
     throw new Error('getVideoInfo: uri is required and must be a non-empty string.');
   }
+  validateUri(uri, 'getVideoInfo: uri');
   return ExpoMediaEditModule.getVideoInfo(uri);
 }
 
@@ -199,6 +241,7 @@ export async function generateThumbnail(
   if (!uri || typeof uri !== 'string') {
     throw new Error('generateThumbnail: uri is required and must be a non-empty string.');
   }
+  validateUri(uri, 'generateThumbnail: uri');
   if (typeof timeMs !== 'number' || timeMs < 0) {
     throw new Error('generateThumbnail: timeMs must be a non-negative number.');
   }
@@ -219,6 +262,7 @@ export async function extractAudio(uri: string): Promise<string> {
   if (!uri || typeof uri !== 'string') {
     throw new Error('extractAudio: uri is required and must be a non-empty string.');
   }
+  validateUri(uri, 'extractAudio: uri');
   return ExpoMediaEditModule.extractAudio(uri);
 }
 

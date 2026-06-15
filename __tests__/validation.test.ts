@@ -1,4 +1,4 @@
-import { editVideo, getVideoInfo, generateThumbnail, addProgressListener, cancelEdit } from '../src/index';
+import { editVideo, getVideoInfo, generateThumbnail, extractAudio, addProgressListener, cancelEdit } from '../src/index';
 
 // Mock the native module
 jest.mock('../src/ExpoMediaEditModule', () => ({
@@ -7,6 +7,7 @@ jest.mock('../src/ExpoMediaEditModule', () => ({
     editVideo: jest.fn().mockResolvedValue('file:///output/video.mp4'),
     getVideoInfo: jest.fn().mockResolvedValue({ durationMs: 10000, width: 640, height: 360, fps: 30, fileSize: 2000000 }),
     generateThumbnail: jest.fn().mockResolvedValue('file:///tmp/thumb.jpg'),
+    extractAudio: jest.fn().mockResolvedValue('file:///tmp/audio.m4a'),
     cleanTempFiles: jest.fn().mockResolvedValue(3),
     cancelEdit: jest.fn().mockResolvedValue(undefined),
   },
@@ -103,6 +104,108 @@ describe('editVideo validation', () => {
       inputUri: 'file:///v.mp4',
       overlays: [{ type: 'text', content: 'Hi', x: 0, y: 0, anchor: 'topLeft', textAlign: 'left', paddingX: 0, paddingY: 0, startMs: 3000, endMs: 1000 }],
     })).rejects.toThrow('startMs must be less than endMs');
+  });
+
+  it('rejects http inputUri (cleartext no longer allowed)', async () => {
+    await expect(editVideo({ inputUri: 'http://example.com/v.mp4' }))
+      .rejects.toThrow('file:// or https://');
+  });
+
+  it('rejects path traversal in inputUri', async () => {
+    await expect(editVideo({ inputUri: 'file:///../../etc/passwd' }))
+      .rejects.toThrow('path traversal');
+  });
+
+  // 0.11.0 — new optional text overlay knobs.
+
+  const baseTextOverlay = {
+    type: 'text', content: 'Hi', x: 0, y: 0,
+    anchor: 'topLeft', textAlign: 'left', paddingX: 0, paddingY: 0,
+  } as const;
+
+  it('throws on invalid fontStyle', async () => {
+    await expect(editVideo({
+      inputUri: 'file:///v.mp4',
+      overlays: [{ ...baseTextOverlay, fontStyle: 'oblique' as any }],
+    })).rejects.toThrow("fontStyle must be 'normal' or 'italic'");
+  });
+
+  it('throws on invalid fontFamily', async () => {
+    await expect(editVideo({
+      inputUri: 'file:///v.mp4',
+      overlays: [{ ...baseTextOverlay, fontFamily: 'comic-sans' as any }],
+    })).rejects.toThrow("fontFamily must be 'system' or 'monospace'");
+  });
+
+  it('throws on negative strokeWidth', async () => {
+    await expect(editVideo({
+      inputUri: 'file:///v.mp4',
+      overlays: [{ ...baseTextOverlay, strokeColor: '#000', strokeWidth: -1 }],
+    })).rejects.toThrow('strokeWidth must be a non-negative number');
+  });
+
+  it('throws on negative shadowRadius', async () => {
+    await expect(editVideo({
+      inputUri: 'file:///v.mp4',
+      overlays: [{ ...baseTextOverlay, shadowColor: '#000', shadowRadius: -2 }],
+    })).rejects.toThrow('shadowRadius must be a non-negative number');
+  });
+
+  it('throws on out-of-range shadowOpacity', async () => {
+    await expect(editVideo({
+      inputUri: 'file:///v.mp4',
+      overlays: [{ ...baseTextOverlay, shadowColor: '#000', shadowRadius: 4, shadowOpacity: 1.5 }],
+    })).rejects.toThrow('shadowOpacity must be a number between 0.0 and 1.0');
+  });
+
+  it('accepts all new text overlay knobs together', async () => {
+    await expect(editVideo({
+      inputUri: 'file:///v.mp4',
+      overlays: [{
+        ...baseTextOverlay,
+        fontStyle: 'italic',
+        fontFamily: 'monospace',
+        strokeColor: '#000000', strokeWidth: 4,
+        shadowColor: '#FFFFFF', shadowRadius: 8, shadowOpacity: 0.6,
+        highlightWord: 'Hi', highlightColor: '#FFD60A',
+      }],
+    })).resolves.toBeTruthy();
+  });
+});
+
+describe('outputUri validation', () => {
+  it('rejects a non-file outputUri', async () => {
+    await expect(editVideo({ inputUri: 'file:///v.mp4', outputUri: 'https://evil.example/x.mp4' }))
+      .rejects.toThrow('outputUri must be a file:// URI');
+  });
+
+  it('rejects path traversal in outputUri', async () => {
+    await expect(editVideo({ inputUri: 'file:///v.mp4', outputUri: 'file:///out/../../etc/x.mp4' }))
+      .rejects.toThrow('path traversal');
+  });
+
+  it('rejects null bytes in outputUri', async () => {
+    await expect(editVideo({ inputUri: 'file:///v.mp4', outputUri: 'file:///out/x\0.mp4' }))
+      .rejects.toThrow('null bytes');
+  });
+
+  it('accepts a file:// outputUri', async () => {
+    await expect(editVideo({ inputUri: 'file:///v.mp4', outputUri: 'file:///tmp/out.mp4' }))
+      .resolves.toBeTruthy();
+  });
+});
+
+describe('read-uri scheme hardening', () => {
+  it('rejects a bad scheme in getVideoInfo', async () => {
+    await expect(getVideoInfo('content://media/external/video/1')).rejects.toThrow('file:// or https://');
+  });
+
+  it('rejects path traversal in generateThumbnail', async () => {
+    await expect(generateThumbnail('file:///../etc/passwd', 0)).rejects.toThrow('path traversal');
+  });
+
+  it('rejects a bad scheme in extractAudio', async () => {
+    await expect(extractAudio('ftp://x/v.mp4')).rejects.toThrow('file:// or https://');
   });
 });
 

@@ -18,9 +18,42 @@ export type TextOverlay = {
   fontSize?: number;
   color?: string;
   fontWeight?: 'normal' | 'bold';
+  /** 0.11.0: italic via the system italic face. Default 'normal'. */
+  fontStyle?: 'normal' | 'italic';
+  /**
+   * 0.11.0: which system font family to use. `'monospace'` picks
+   * `UIFont.monospacedSystemFont` on iOS and `Typeface.MONOSPACE` on
+   * Android. Default `'system'`.
+   */
+  fontFamily?: 'system' | 'monospace';
   backgroundColor?: string;
   /** Corner radius for the background box, in pixels at the 1080-height reference. 0 = sharp corners. */
   cornerRadius?: number;
+  /**
+   * 0.11.0: optional text outline. `strokeWidth` is in pixels at the
+   * 1080-height reference (scaled like fontSize). Both fields must be
+   * present to render — providing only one is a no-op.
+   */
+  strokeColor?: string;
+  strokeWidth?: number;
+  /**
+   * 0.11.0: optional soft halo behind the text. `shadowRadius` is in
+   * pixels at the 1080-height reference (scaled); `shadowOpacity` is
+   * 0..1 (default 1). `shadowColor` + `shadowRadius` required to
+   * render; providing only one is a no-op.
+   */
+  shadowColor?: string;
+  shadowRadius?: number;
+  shadowOpacity?: number;
+  /**
+   * 0.11.0: word/substring colouring for karaoke-style captions. The
+   * FIRST occurrence of `highlightWord` inside `content` is rendered
+   * in `highlightColor`; the rest of the content stays in `color`.
+   * Case-sensitive, exact substring match. Both fields required to
+   * render — providing only one is a no-op.
+   */
+  highlightWord?: string;
+  highlightColor?: string;
   rotation?: number;  // degrees, default 0
   startMs?: number;
   endMs?: number;

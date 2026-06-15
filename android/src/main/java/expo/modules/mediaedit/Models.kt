@@ -26,8 +26,20 @@ data class TextOverlayItem(
   val fontSize: Float,
   val color: String,
   val fontWeight: String,
+  val fontStyle: String,     // "normal" | "italic" — 0.11.0
+  val fontFamily: String,    // "system" | "monospace" — 0.11.0
   val backgroundColor: String?,
   val cornerRadius: Float,  // px at 1080-height reference
+  // 0.11.0 — optional outline (color + width required to render)
+  val strokeColor: String?,
+  val strokeWidth: Float,    // 0 = no stroke
+  // 0.11.0 — optional soft halo (color + radius required to render)
+  val shadowColor: String?,
+  val shadowRadius: Float,   // 0 = no shadow
+  val shadowOpacity: Float,  // 0..1
+  // 0.11.0 — first-occurrence substring highlight
+  val highlightWord: String?,
+  val highlightColor: String?,
   val rotation: Float,  // degrees, default 0
   val startMs: Long?,
   val endMs: Long?
@@ -117,8 +129,17 @@ data class EditJob(
               fontSize = (o["fontSize"] as? Number)?.toFloat() ?: 32f,
               color = o["color"] as? String ?: "#FFFFFF",
               fontWeight = o["fontWeight"] as? String ?: "normal",
+              fontStyle = o["fontStyle"] as? String ?: "normal",
+              fontFamily = o["fontFamily"] as? String ?: "system",
               backgroundColor = o["backgroundColor"] as? String,
               cornerRadius = (o["cornerRadius"] as? Number)?.toFloat() ?: 0f,
+              strokeColor = o["strokeColor"] as? String,
+              strokeWidth = (o["strokeWidth"] as? Number)?.toFloat() ?: 0f,
+              shadowColor = o["shadowColor"] as? String,
+              shadowRadius = (o["shadowRadius"] as? Number)?.toFloat() ?: 0f,
+              shadowOpacity = (o["shadowOpacity"] as? Number)?.toFloat() ?: 1f,
+              highlightWord = o["highlightWord"] as? String,
+              highlightColor = o["highlightColor"] as? String,
               rotation = (o["rotation"] as? Number)?.toFloat() ?: 0f,
               startMs = (o["startMs"] as? Number)?.toLong(),
               endMs = (o["endMs"] as? Number)?.toLong()
@@ -143,7 +164,7 @@ data class EditJob(
 
       val audio = (map["audio"] as? Map<String, Any?>)?.let { a ->
         val uri = a["uri"] as? String ?: return@let null
-        if (uri.contains("../")) return@let null
+        if (uri.contains("../") || (!uri.startsWith("file://") && !uri.startsWith("https://"))) return@let null
         AudioMixOptions(
           uri = uri,
           volume = (a["volume"] as? Number)?.toFloat() ?: 1f,
