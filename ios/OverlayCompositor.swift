@@ -174,13 +174,20 @@ public class OverlayCompositor {
       string: opts.content,
       attributes: textAttributes(font: uiFont, color: fgColor, opts: opts)
     )
-    if let hlWord = opts.highlightWord, !hlWord.isEmpty,
-       let hlColorStr = opts.highlightColor,
-       let hlColor = UIColor(hexString: hlColorStr) {
-      let range = (opts.content as NSString).range(of: hlWord)
-      if range.location != NSNotFound {
-        attributed.addAttribute(.foregroundColor, value: hlColor, range: range)
-      }
+    // 0.12.0: karaoke highlight. Explicit UTF-16 range — NSString length
+    // is UTF-16 units, matches what callers compute via JS String.length.
+    if let hlColorStr = opts.highlightColor,
+       let hlColor = UIColor(hexString: hlColorStr),
+       let start = opts.highlightStart,
+       let length = opts.highlightLength,
+       length > 0,
+       start >= 0,
+       start + length <= (opts.content as NSString).length {
+      attributed.addAttribute(
+        .foregroundColor,
+        value: hlColor,
+        range: NSRange(location: start, length: length)
+      )
     }
 
     // Measure using the same attributes so wrapping math stays correct

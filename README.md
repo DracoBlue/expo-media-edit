@@ -116,6 +116,20 @@ type OverlayItem =
       fontWeight?: 'normal' | 'bold';
       backgroundColor?: string;
       cornerRadius?: number;  // px at 1080-height reference; rounds the bg box. Default: 0
+      // Outline + halo (0.11.0). Both required to render — providing one of a pair is a no-op.
+      strokeColor?: string;
+      strokeWidth?: number;   // px at 1080-height reference, scaled like fontSize
+      shadowColor?: string;
+      shadowRadius?: number;  // px at 1080-height reference, scaled like fontSize
+      shadowOpacity?: number; // 0..1, default 1
+      fontStyle?: 'normal' | 'italic';      // 0.11.0
+      fontFamily?: 'system' | 'monospace';  // 0.11.0
+      // Karaoke-style word highlight (0.12.0). All three required to render.
+      // The UTF-16 char range [highlightStart, highlightStart + highlightLength)
+      // of `content` is painted in highlightColor; the rest stays in `color`.
+      highlightColor?: string;
+      highlightStart?: number;
+      highlightLength?: number;
       rotation?: number;      // degrees, default 0
       startMs?: number;       // Show from this time (default: 0)
       endMs?: number;         // Hide after this time (default: video end)

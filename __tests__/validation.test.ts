@@ -167,7 +167,7 @@ describe('editVideo validation', () => {
         fontFamily: 'monospace',
         strokeColor: '#000000', strokeWidth: 4,
         shadowColor: '#FFFFFF', shadowRadius: 8, shadowOpacity: 0.6,
-        highlightWord: 'Hi', highlightColor: '#FFD60A',
+        highlightStart: 0, highlightLength: 2, highlightColor: '#FFD60A',
       }],
     })).resolves.toBeTruthy();
   });

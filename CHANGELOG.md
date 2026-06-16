@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0] - 2026-06-16
+
+### Breaking
+
+- `TextOverlay.highlightWord` (added in 0.11.0) is removed. It
+  resolved to the FIRST substring match in `content` which produced
+  the wrong word whenever the active word appeared more than once in
+  the line (a common case for speech-recogniser output like
+  `"Mimi Mimi Mimi"` — the highlight was stuck on word 0).
+
+### Added
+
+- `TextOverlay.highlightStart` (UTF-16 char offset) and
+  `TextOverlay.highlightLength` replace `highlightWord`. The character
+  range `[highlightStart, highlightStart + highlightLength)` of
+  `content` is painted in `highlightColor`. All three fields must be
+  set to render — out-of-range or zero-length values are ignored.
+- iOS uses `NSString.range(location:length:)` on an
+  `NSMutableAttributedString`; Android uses `SpannableString.setSpan`
+  with `ForegroundColorSpan`. Both treat the indices as UTF-16 units
+  to match JS `String.length`.
+
+### Migration
+
+Callers that emitted `highlightWord: word, highlightColor: c` should
+compute the word's offset in `content` and emit
+`highlightStart, highlightLength, highlightColor` instead. For a line
+joined with single spaces from a `words: { text: string }[]` array,
+`start = words.slice(0, i).map(w => w.text.length + 1).reduce((a,b)=>a+b, 0)`
+and `length = words[i].text.length`.
+
 ## [0.11.0] - 2026-06-15
 
 ### Security

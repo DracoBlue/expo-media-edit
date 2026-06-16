@@ -30,9 +30,10 @@ public struct TextOverlayOptions {
   let shadowColor: String?
   let shadowRadius: Double  // 0 = no shadow
   let shadowOpacity: Double // 0..1
-  // 0.11.0 — first-occurrence substring highlight (both required to render)
-  let highlightWord: String?
+  // 0.12.0 — karaoke highlight: explicit UTF-16 range + colour, all three required to render
   let highlightColor: String?
+  let highlightStart: Int?
+  let highlightLength: Int?
   let rotation: Double
   let startMs: Double?
   let endMs: Double?
@@ -154,8 +155,9 @@ public struct EditJobOptions {
             shadowColor: o["shadowColor"] as? String,
             shadowRadius: o["shadowRadius"] as? Double ?? 0,
             shadowOpacity: o["shadowOpacity"] as? Double ?? 1,
-            highlightWord: o["highlightWord"] as? String,
             highlightColor: o["highlightColor"] as? String,
+            highlightStart: (o["highlightStart"] as? NSNumber)?.intValue,
+            highlightLength: (o["highlightLength"] as? NSNumber)?.intValue,
             rotation: o["rotation"] as? Double ?? 0,
             startMs: o["startMs"] as? Double,
             endMs: o["endMs"] as? Double

@@ -293,22 +293,23 @@ class OverlayCompositor(private val context: Context) {
   }
 
   /**
-   * Build a SpannableString that paints the FIRST occurrence of
-   * `highlightWord` in `highlightColor` while the rest stays default.
-   * No-op if either field is missing or the substring isn't found.
+   * 0.12.0 karaoke highlight: paint the explicit UTF-16 char range
+   * [highlightStart, +highlightLength) in highlightColor while the
+   * rest stays at the overlay's default colour. No-op when any of
+   * the three fields is missing or the range is out of bounds.
    */
   private fun buildSpannable(opts: TextOverlayItem): SpannableString {
     val spannable = SpannableString(opts.content)
-    val word = opts.highlightWord ?: return spannable
     val colorStr = opts.highlightColor ?: return spannable
-    if (word.isEmpty()) return spannable
-    val idx = opts.content.indexOf(word)
-    if (idx < 0) return spannable
+    val start = opts.highlightStart ?: return spannable
+    val length = opts.highlightLength ?: return spannable
+    val len = opts.content.length
+    if (length <= 0 || start < 0 || start + length > len) return spannable
     val color = parseColorOrDefault(colorStr, Color.YELLOW)
     spannable.setSpan(
       ForegroundColorSpan(color),
-      idx,
-      idx + word.length,
+      start,
+      start + length,
       Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     return spannable
@@ -324,8 +325,9 @@ class OverlayCompositor(private val context: Context) {
           val fontPx = opts.fontSize * scaleFactor
 
           val baseTypeface = resolveTypeface(opts.fontFamily, opts.fontWeight, opts.fontStyle)
-          // 0.11.0 — Spannable lets us paint the optional highlightWord
-          // in highlightColor while the rest of the text stays in color.
+          // 0.12.0 — Spannable lets us paint the optional karaoke
+          // highlight range in highlightColor while the rest of the
+          // text stays in color.
           val spannable = buildSpannable(opts)
 
           val baseColor = parseColorOrDefault(opts.color, Color.WHITE)

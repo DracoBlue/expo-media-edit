@@ -46,14 +46,21 @@ export type TextOverlay = {
   shadowRadius?: number;
   shadowOpacity?: number;
   /**
-   * 0.11.0: word/substring colouring for karaoke-style captions. The
-   * FIRST occurrence of `highlightWord` inside `content` is rendered
-   * in `highlightColor`; the rest of the content stays in `color`.
-   * Case-sensitive, exact substring match. Both fields required to
-   * render — providing only one is a no-op.
+   * 0.12.0: karaoke-style word/substring colouring. The character
+   * range [`highlightStart`, `highlightStart` + `highlightLength`) of
+   * `content` is rendered in `highlightColor`; the rest stays in
+   * `color`. Indices are UTF-16 units (matches JS `String.length`).
+   *
+   * All three fields are required to render — providing only one or
+   * two is a no-op. Out-of-range / zero-length values are ignored.
+   *
+   * (Pre-0.12.0 had a `highlightWord` substring-match API. Dropped
+   * because it always picked the first occurrence — wrong for lines
+   * where the recogniser produced the same word repeatedly.)
    */
-  highlightWord?: string;
   highlightColor?: string;
+  highlightStart?: number;
+  highlightLength?: number;
   rotation?: number;  // degrees, default 0
   startMs?: number;
   endMs?: number;

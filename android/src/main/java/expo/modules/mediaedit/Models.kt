@@ -37,9 +37,10 @@ data class TextOverlayItem(
   val shadowColor: String?,
   val shadowRadius: Float,   // 0 = no shadow
   val shadowOpacity: Float,  // 0..1
-  // 0.11.0 — first-occurrence substring highlight
-  val highlightWord: String?,
+  // 0.12.0 — karaoke highlight: explicit UTF-16 range + colour, all three required to render
   val highlightColor: String?,
+  val highlightStart: Int?,
+  val highlightLength: Int?,
   val rotation: Float,  // degrees, default 0
   val startMs: Long?,
   val endMs: Long?
@@ -138,8 +139,9 @@ data class EditJob(
               shadowColor = o["shadowColor"] as? String,
               shadowRadius = (o["shadowRadius"] as? Number)?.toFloat() ?: 0f,
               shadowOpacity = (o["shadowOpacity"] as? Number)?.toFloat() ?: 1f,
-              highlightWord = o["highlightWord"] as? String,
               highlightColor = o["highlightColor"] as? String,
+              highlightStart = (o["highlightStart"] as? Number)?.toInt(),
+              highlightLength = (o["highlightLength"] as? Number)?.toInt(),
               rotation = (o["rotation"] as? Number)?.toFloat() ?: 0f,
               startMs = (o["startMs"] as? Number)?.toLong(),
               endMs = (o["endMs"] as? Number)?.toLong()
