@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.1] - 2026-06-17
+
+### Fixed
+
+- iOS: `highlightStart` / `highlightLength` were parsed via
+  `as? NSNumber`, which does not reliably catch the bridged Double
+  that the Expo JS↔Swift bridge produces for plain JS numbers. The
+  result was a silent no-op — the renderer received `nil` indices,
+  the guard rejected the range, and karaoke highlight never painted
+  even though `highlightColor` was set. Now parses through
+  `as? Double` and maps to `Int`, matching the pattern used by every
+  other numeric field in the file (`fontSize`, `strokeWidth`, etc.).
+
 ## [0.12.0] - 2026-06-16
 
 ### Breaking

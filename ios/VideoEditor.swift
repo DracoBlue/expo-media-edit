@@ -156,8 +156,12 @@ public struct EditJobOptions {
             shadowRadius: o["shadowRadius"] as? Double ?? 0,
             shadowOpacity: o["shadowOpacity"] as? Double ?? 1,
             highlightColor: o["highlightColor"] as? String,
-            highlightStart: (o["highlightStart"] as? NSNumber)?.intValue,
-            highlightLength: (o["highlightLength"] as? NSNumber)?.intValue,
+            // Bridge brings JS numbers in as Double; map to Int. Plain
+            // `as? Int` was unreliable across SDK versions and was the
+            // 0.12.0 release bug that made karaoke highlight silently
+            // disappear in the render (0.12.1).
+            highlightStart: (o["highlightStart"] as? Double).map { Int($0) },
+            highlightLength: (o["highlightLength"] as? Double).map { Int($0) },
             rotation: o["rotation"] as? Double ?? 0,
             startMs: o["startMs"] as? Double,
             endMs: o["endMs"] as? Double
