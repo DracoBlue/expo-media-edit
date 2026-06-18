@@ -1,6 +1,6 @@
 {
   "name": "expo-media-edit",
-  "version": "0.12.1",
+  "version": "0.12.2",
   "description": "Native video editing for Expo — trim, overlay text/images, mix audio. No FFmpeg.",
   "main": "build/index.js",
   "types": "build/index.d.ts",

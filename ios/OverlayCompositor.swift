@@ -143,6 +143,26 @@ public class OverlayCompositor {
       attrs[.strokeColor] = strokeColor
       attrs[.strokeWidth] = percent
     }
+    // 0.12.2: shadow now lives PER-GLYPH (NSShadow attribute) instead
+    // of as a CALayer.shadow on the wrapping text layer. Reason:
+    // CALayer.shadow draws around the WHOLE layer including its
+    // backgroundColor, so when a user combined a glow style with a
+    // background pill the halo wrapped the pill itself instead of
+    // staying around the glyphs. Per-glyph shadow matches the Android
+    // Paint.setShadowLayer behaviour and the editor's RN textShadow.
+    if let shadowStr = opts.shadowColor,
+       let shadowColor = UIColor(hexString: shadowStr),
+       opts.shadowRadius > 0 {
+      let nsShadow = NSShadow()
+      // opts.shadowRadius is in 1080-ref px; convert to display pt by
+      // the same scale we used for fontSize.
+      let scale = font.pointSize / CGFloat(opts.fontSize)
+      nsShadow.shadowBlurRadius = CGFloat(opts.shadowRadius) * scale
+      nsShadow.shadowOffset = .zero
+      let opacity = max(0, min(1, opts.shadowOpacity))
+      nsShadow.shadowColor = shadowColor.withAlphaComponent(CGFloat(opacity))
+      attrs[.shadow] = nsShadow
+    }
     return attrs
   }
 
@@ -235,20 +255,13 @@ public class OverlayCompositor {
       textLayer.masksToBounds = true
     }
 
-    // 0.11.0 — soft halo. CALayer's shadow draws OUTSIDE the layer
-    // bounds, so it bleeds tastefully into the surrounding video.
-    // masksToBounds (used by cornerRadius) clips the shadow, so when
-    // both are requested we forfeit the corner-radius clipping. The
-    // text-stroke happens inside the layer so it's unaffected.
-    if let shadowStr = opts.shadowColor,
-       let shadow = UIColor(hexString: shadowStr),
-       opts.shadowRadius > 0 {
-      textLayer.shadowColor = shadow.cgColor
-      textLayer.shadowRadius = CGFloat(opts.shadowRadius) * scale
-      textLayer.shadowOpacity = Float(max(0, min(1, opts.shadowOpacity)))
-      textLayer.shadowOffset = .zero
-      if opts.cornerRadius > 0 { textLayer.masksToBounds = false }
-    }
+    // 0.11.0 had a CALayer.shadow here that wrapped the entire text
+    // layer including its bg pill — produced a halo around the pill
+    // when a user combined a glow style with a background. 0.12.2
+    // moved the halo into the NSAttributedString.shadow attribute
+    // (see textAttributes above) so the halo wraps only the glyphs,
+    // matching Android's Paint.setShadowLayer and the editor's RN
+    // textShadow. No layer-level shadow here on purpose.
 
     applyTimingAnimation(to: textLayer, startMs: opts.startMs, endMs: opts.endMs, duration: duration)
 

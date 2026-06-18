@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.2] - 2026-06-18
+
+### Fixed
+
+- iOS: text shadow (`shadowColor` + `shadowRadius` + `shadowOpacity`)
+  was attached to the wrapping `CATextLayer` as `layer.shadowColor`
+  etc. When the user combined a glow style with a background pill,
+  the halo wrapped the ENTIRE pill instead of staying around the
+  glyphs. Now expressed via `NSAttributedString.shadow` (NSShadow on
+  each glyph), matching Android's `Paint.setShadowLayer` and the
+  editor's RN `textShadow`. Visual: halo radiates from each glyph
+  outward and is naturally clipped inside any bg pill, so the pill
+  itself stays sharp.
+
 ## [0.12.1] - 2026-06-17
 
 ### Fixed
