@@ -2,19 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.12.2] - 2026-06-18
+## [0.13.0] - 2026-06-18
 
-### Fixed
+### Changed (visual)
 
-- iOS: text shadow (`shadowColor` + `shadowRadius` + `shadowOpacity`)
-  was attached to the wrapping `CATextLayer` as `layer.shadowColor`
-  etc. When the user combined a glow style with a background pill,
-  the halo wrapped the ENTIRE pill instead of staying around the
-  glyphs. Now expressed via `NSAttributedString.shadow` (NSShadow on
-  each glyph), matching Android's `Paint.setShadowLayer` and the
-  editor's RN `textShadow`. Visual: halo radiates from each glyph
-  outward and is naturally clipped inside any bg pill, so the pill
-  itself stays sharp.
+- iOS: `TextOverlay.shadowColor` + `shadowRadius` + `shadowOpacity`
+  now render as a PER-GLYPH halo via `NSAttributedString.shadow`
+  (NSShadow), not as a `CATextLayer.shadowColor` on the wrapping
+  layer. Old behaviour: when the overlay also had a `backgroundColor`
+  (pill), the halo wrapped the entire pill instead of the glyphs —
+  PO repro 2026-06-18 with glow style + dark bg, the pill itself
+  carried a soft outer halo. New behaviour matches Android's
+  `Paint.setShadowLayer` and the RN-side `textShadow*` editor
+  preview: halo radiates outward from each glyph and is naturally
+  clipped where the bg pill begins, so the pill stays sharp.
+
+  Visible difference for callers using shadow WITHOUT a bg: the halo
+  is now per-glyph, so inter-glyph spacing carries shadow too instead
+  of one big rectangular halo around the whole layer. Bumped to
+  0.13.0 rather than a patch because the visual character of the
+  halo changes meaningfully even though the API is unchanged.
 
 ## [0.12.1] - 2026-06-17
 

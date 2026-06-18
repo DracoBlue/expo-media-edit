@@ -143,7 +143,7 @@ public class OverlayCompositor {
       attrs[.strokeColor] = strokeColor
       attrs[.strokeWidth] = percent
     }
-    // 0.12.2: shadow now lives PER-GLYPH (NSShadow attribute) instead
+    // 0.13.0: shadow now lives PER-GLYPH (NSShadow attribute) instead
     // of as a CALayer.shadow on the wrapping text layer. Reason:
     // CALayer.shadow draws around the WHOLE layer including its
     // backgroundColor, so when a user combined a glow style with a
@@ -257,7 +257,7 @@ public class OverlayCompositor {
 
     // 0.11.0 had a CALayer.shadow here that wrapped the entire text
     // layer including its bg pill — produced a halo around the pill
-    // when a user combined a glow style with a background. 0.12.2
+    // when a user combined a glow style with a background. 0.13.0
     // moved the halo into the NSAttributedString.shadow attribute
     // (see textAttributes above) so the halo wraps only the glyphs,
     // matching Android's Paint.setShadowLayer and the editor's RN
