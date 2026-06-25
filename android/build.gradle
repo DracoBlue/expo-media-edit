@@ -1,7 +1,7 @@
 apply plugin: 'com.android.library'
 
 group = 'expo.modules.mediaedit'
-version = '0.13.0'
+version = '0.14.0'
 
 def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
 apply from: expoModulesCorePlugin
@@ -9,9 +9,11 @@ applyKotlinExpoModulesCorePlugin()
 useCoreDependencies()
 useExpoPublishing()
 
-// Manage the Android SDK versions ourselves rather than inheriting from
-// expo-modules-core, since we depend on min/target SDK ≥ 26 for the
-// media-edit APIs (MediaCodec async callbacks, ExoPlayer 2.x).
+// 0.14.0: Android SDK 26+ baseline kept; we now also pull in
+// androidx.media3 (transformer + effect + exoplayer + ui) which
+// drives the new Project-based composer and CompositionPlayer-backed
+// MediaPreview view. Replaces the hand-rolled MediaCodec/MediaMuxer
+// pipeline from 0.13.x.
 def useManagedAndroidSdkVersions = false
 if (useManagedAndroidSdkVersions) {
   useDefaultAndroidSdkVersions()
@@ -34,9 +36,18 @@ android {
   namespace "expo.modules.mediaedit"
   defaultConfig {
     versionCode 1
-    versionName "0.13.0"
+    versionName "0.14.0"
   }
   lintOptions {
     abortOnError false
   }
+}
+
+dependencies {
+  def media3Version = "1.5.1"
+  implementation "androidx.media3:media3-common:${media3Version}"
+  implementation "androidx.media3:media3-exoplayer:${media3Version}"
+  implementation "androidx.media3:media3-ui:${media3Version}"
+  implementation "androidx.media3:media3-effect:${media3Version}"
+  implementation "androidx.media3:media3-transformer:${media3Version}"
 }

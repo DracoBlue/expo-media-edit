@@ -5,27 +5,28 @@ import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
+import androidx.media3.common.util.UnstableApi
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
 
+@UnstableApi
 class ExpoMediaEditModule : Module() {
 
-  @Volatile private var cancelRequested = false
+  @Volatile private var activeExporter: ProjectExporter? = null
 
   override fun definition() = ModuleDefinition {
     Name("ExpoMediaEdit")
 
     Events("onProgress")
 
-    AsyncFunction("editVideo") { jobMap: Map<String, Any?>, promise: Promise ->
+    // MARK: - exportProject(project, outputUri?, opts?)
+    AsyncFunction("exportProject") { projectMap: Map<String, Any?>, outputUri: String?, opts: Map<String, Any?>?, promise: Promise ->
       val ctx = requireNotNull(appContext.reactContext) { "React context not available" }
-      val job = EditJob.fromMap(jobMap)
-      cancelRequested = false
 
-      val outputFile = if (job.outputUri != null) {
-        resolveAllowedOutputFile(ctx, job.outputUri)
+      val outputFile = if (outputUri != null && outputUri.isNotEmpty()) {
+        resolveAllowedOutputFile(ctx, outputUri)
           ?: run {
             promise.reject("INVALID_OUTPUT", "outputUri must be a file:// path inside the app's sandbox", null)
             return@AsyncFunction
@@ -34,69 +35,47 @@ class ExpoMediaEditModule : Module() {
         createTempFile(ctx, "output", ".mp4")
       }
 
-      val progressCallback: (Float) -> Unit = { progress ->
-        val bundle = Bundle().apply { putDouble("progress", progress.toDouble()) }
-        sendEvent("onProgress", bundle)
-      }
-      val completion: (Result<Uri>) -> Unit = { result ->
-        cancelRequested = false
-        result.fold(
-          onSuccess = { uri -> promise.resolve(uri.toString()) },
-          onFailure = { e ->
-            if (e is CancellationException) {
-              promise.reject("CANCELLED", "Edit was cancelled", e)
-            } else {
-              promise.reject("EDIT_FAILED", e.message ?: "Unknown error", e)
-            }
-          }
-        )
-      }
+      val quality = (opts?.get("quality") as? String) ?: "high"
 
       Thread {
-        val playlist = job.playlist
-        if (playlist != null && (playlist.size > 1 || playlist.firstOrNull() is PlaylistItemConfig.ImageItem)) {
-          PlaylistCompositor(ctx).composite(
-            playlist = playlist,
-            overlays = job.overlays,
-            audio = job.audio,
-            quality = job.quality,
-            outputFile = outputFile,
-            progressCallback = progressCallback,
-            cancelCheck = { cancelRequested },
-            completion = completion
-          )
-        } else {
-          // Single-video fast path
-          val firstItem = playlist?.firstOrNull() as? PlaylistItemConfig.VideoItem
-          if (firstItem == null) {
-            promise.reject("INVALID_INPUT", "No valid video item in playlist", null)
-            return@Thread
-          }
-          val inputUri = Uri.parse(firstItem.uri)
-          val singleJob = EditJob(
-            outputUri = job.outputUri,
-            trim = firstItem.trim,
-            overlays = job.overlays,
-            audio = job.audio,
-            quality = job.quality,
-            playlist = null
-          )
-          VideoEditor(ctx).edit(
-            inputUri = inputUri,
-            outputFile = outputFile,
-            job = singleJob,
-            progressCallback = progressCallback,
-            cancelCheck = { cancelRequested },
-            completion = completion
-          )
+        val compiled = try {
+          val project = ProjectParser.parse(projectMap)
+          ProjectCompiler.compile(ctx, project, ProjectCompiler.Mode.EXPORT)
+        } catch (e: Exception) {
+          promise.reject("COMPILE_FAILED", "${e.javaClass.simpleName}: ${e.message ?: ""}", e)
+          return@Thread
         }
+
+        val exporter = ProjectExporter(ctx)
+        activeExporter = exporter
+        exporter.export(
+          composition = compiled.composition,
+          outputFile = outputFile,
+          quality = quality,
+          onProgress = { p ->
+            sendEvent("onProgress", Bundle().apply { putDouble("progress", p.toDouble()) })
+          },
+          completion = { result ->
+            activeExporter = null
+            result.fold(
+              onSuccess = { f -> promise.resolve("file://${f.absolutePath}") },
+              onFailure = { e ->
+                if (e is CancellationException) promise.reject("CANCELLED", e.message ?: "cancelled", e)
+                else promise.reject("EXPORT_FAILED", e.message ?: "Unknown export error", e)
+              }
+            )
+          }
+        )
       }.start()
     }
 
-    AsyncFunction("cancelEdit") { promise: Promise ->
-      cancelRequested = true
+    AsyncFunction("cancelExport") { promise: Promise ->
+      activeExporter?.cancel()
       promise.resolve(null)
     }
+
+    // MARK: - getVideoInfo / generateThumbnail / extractAudio / cleanTempFiles
+    // Unchanged from 0.13.x — independent of the composer.
 
     AsyncFunction("getVideoInfo") { uri: String, promise: Promise ->
       if (!isReadableUriAllowed(uri)) {
@@ -111,15 +90,9 @@ class ExpoMediaEditModule : Module() {
         val rawWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toInt() ?: 0
         val rawHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toInt() ?: 0
         val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toInt() ?: 0
-        // Apply rotation so width/height reflect rendered orientation (matches iOS)
         val (width, height) = if (rotation == 90 || rotation == 270) rawHeight to rawWidth else rawWidth to rawHeight
         val fileSize = if (uri.startsWith("file://")) File(uri.removePrefix("file://")).length() else 0L
 
-        // Frame rate + codec: MediaExtractor reads the video track's KEY_FRAME_RATE
-        // (set for all encoded videos; CAPTURE_FRAMERATE is only set for camera-captured
-        // ones) and KEY_MIME (the encoded codec). Android's MediaMetadataRetriever has no
-        // codec field — iOS reads it from `CMFormatDescription`, we read the MIME here
-        // and map it to the same FourCC the iOS side returns.
         var fps = 0f
         var codecMime: String? = null
         val extractor = MediaExtractor()
@@ -138,7 +111,6 @@ class ExpoMediaEditModule : Module() {
             }
           }
         } catch (_: Exception) {
-          // Fall back to CAPTURE_FRAMERATE (best effort)
           fps = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)?.toFloat() ?: 0f
         } finally {
           extractor.release()
@@ -194,7 +166,7 @@ class ExpoMediaEditModule : Module() {
       val ctx = requireNotNull(appContext.reactContext)
       Thread {
         try {
-          val extractor = android.media.MediaExtractor()
+          val extractor = MediaExtractor()
           extractor.setDataSource(ctx, Uri.parse(uri), null)
           var audioTrack = -1
           var audioFormat: MediaFormat? = null
@@ -202,9 +174,7 @@ class ExpoMediaEditModule : Module() {
             val format = extractor.getTrackFormat(i)
             val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
             if (mime.startsWith("audio/")) {
-              audioTrack = i
-              audioFormat = format
-              break
+              audioTrack = i; audioFormat = format; break
             }
           }
           if (audioTrack < 0 || audioFormat == null) {
@@ -231,9 +201,7 @@ class ExpoMediaEditModule : Module() {
             muxer.writeSampleData(muxAudioTrack, buffer, bufferInfo)
             extractor.advance()
           }
-          muxer.stop()
-          muxer.release()
-          extractor.release()
+          muxer.stop(); muxer.release(); extractor.release()
           promise.resolve("file://${outputFile.absolutePath}")
         } catch (e: Exception) {
           promise.reject("EXTRACT_FAILED", e.message ?: "Audio extraction failed", e)
@@ -245,22 +213,33 @@ class ExpoMediaEditModule : Module() {
       val ctx = requireNotNull(appContext.reactContext)
       val tempDir = File(ctx.cacheDir, "expo-media-edit")
       var count = 0
-      tempDir.listFiles()?.forEach { file ->
-        if (file.delete()) count++
-      }
+      tempDir.listFiles()?.forEach { file -> if (file.delete()) count++ }
       promise.resolve(count)
+    }
+
+    // MARK: - <MediaPreview /> view
+
+    View(MediaPreviewView::class) {
+      Events("onTime", "onReady", "onError")
+
+      Prop("project") { view: MediaPreviewView, project: Map<String, Any?> ->
+        view.updateProject(project)
+      }
+      Prop("time") { view: MediaPreviewView, time: Double ->
+        view.updateTime(time)
+      }
+      Prop("playing") { view: MediaPreviewView, playing: Boolean ->
+        view.updatePlaying(playing)
+      }
+      Prop("renderScale") { view: MediaPreviewView, scale: Double ->
+        view.updateRenderScale(scale)
+      }
     }
   }
 }
 
 class CancellationException(message: String) : Exception(message)
 
-/**
- * Maps an Android MediaFormat MIME string to the same FourCC the iOS side
- * reports from `CMFormatDescription` so `getVideoInfo().codec` is the same
- * shape on both platforms. Unknown MIME types pass through unchanged so
- * callers can still log them; `null` propagates.
- */
 private fun mimeToFourCC(mime: String?): String? = when (mime) {
   null -> null
   "video/avc" -> "avc1"
