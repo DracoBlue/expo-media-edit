@@ -1,13 +1,20 @@
 # expo-media-edit
 
-Native video editing for Expo apps. Trim, overlay text/images, and mix audio — fully on-device via AVFoundation (iOS) and MediaCodec (Android). No FFmpeg, no cloud rendering.
+Native video composer for Expo apps. Define a Project, render it
+identically in a live preview view and an exported MP4 — fully
+on-device via AVFoundation (iOS) and androidx.media3 (Android). No
+FFmpeg, no cloud rendering.
+
+> 0.14.0 is a breaking redesign. See [CHANGELOG.md](./CHANGELOG.md)
+> for the migration from the 0.13.x `editVideo(EditJob)` API.
 
 ## Requirements
 
 - iOS 16+
 - Android API 26+
 - Expo SDK 54+
-- Requires a native build (EAS Build or `expo run:ios` / `expo run:android`). Does **not** work in Expo Go.
+- Requires a native build (EAS Build or `expo run:ios` / `expo
+  run:android`). Does **not** work in Expo Go.
 
 ## Installation
 
@@ -18,213 +25,153 @@ npx expo install expo-media-edit
 Then rebuild your native app:
 
 ```sh
-# iOS
-npx expo run:ios
-# or
-eas build --platform ios
-
-# Android
-npx expo run:android
+npx expo run:ios     # or: eas build --platform ios
+npx expo run:android # or: eas build --platform android
 ```
+
+## Concepts
+
+A `Project` is a pure-data, JSON-serialisable document describing
+tracks (video / audio / overlay), clips inside each track, transitions
+between video clips, and overlays. The library exposes ONE compiler
+that turns a Project into a native composition. That composition
+feeds BOTH:
+
+- `<MediaPreview project={...} />` for live in-app preview, AND
+- `exportProject(project)` for the final MP4 render
+
+Same compiler, same composition → preview pixels equal export pixels.
 
 ## Usage
 
 ```ts
-import { editVideo, addProgressListener, cancelEdit } from 'expo-media-edit';
+import {
+  createProject, applyEdit, exportProject,
+  addProgressListener, MediaPreview, type Project,
+} from 'expo-media-edit';
 
-// Subscribe to progress before starting
-const sub = addProgressListener(({ progress }) => {
-  console.log(`Progress: ${Math.round(progress * 100)}%`);
-});
-
-const outputUri = await editVideo({
-  inputUri: 'file:///path/to/video.mp4',
-  trim: { startMs: 0, endMs: 15000 },
-  quality: 'medium',
-  overlays: [
-    {
-      type: 'text',
-      content: 'Hello World',
-      x: 0.05,
-      y: 0.85,
-      anchor: 'topLeft',
-      textAlign: 'left',
-      paddingX: 16,
-      paddingY: 8,
-      fontSize: 48,
-      color: '#FFFFFF',
-      fontWeight: 'bold',
-    },
-    {
-      type: 'image',
-      uri: 'file:///path/to/logo.png',
-      x: 0.7,
-      y: 0.05,
-      width: 0.2,
-      height: 0.1,
-      opacity: 0.9,
-    },
+// Build a Project (pure data — store/serialise/diff freely).
+const project: Project = createProject({
+  canvasSize: { width: 1080, height: 1920 },
+  tracks: [
+    { kind: 'video', id: 'v', clips: [{
+      id: 'c1',
+      sourceUri: 'file:///path/to/clip.mp4',
+      sourceRange: { startMs: 0, endMs: 5000 },
+      timelineRange: { startMs: 0, endMs: 5000 },
+    }] },
+    { kind: 'audio', id: 'a', clips: [{
+      id: 'm1',
+      sourceUri: 'file:///path/to/music.mp3',
+      sourceRange: { startMs: 0, endMs: 5000 },
+      timelineRange: { startMs: 0, endMs: 5000 },
+      volume: 0.8, trimToVideo: true,
+    }] },
+    { kind: 'overlay', id: 'o', items: [{
+      id: 'txt',
+      kind: 'text', content: 'Hello',
+      x: 0.5, y: 0.88, anchor: 'center', textAlign: 'center',
+      paddingX: 16, paddingY: 8, fontSize: 48,
+      color: '#FFFFFF', fontWeight: 'bold',
+    }] },
   ],
-  audio: {
-    uri: 'file:///path/to/music.mp3',
-    volume: 0.8,
-    originalVolume: 0.2,
-    trimToVideo: true,
-  },
 });
 
-sub.remove(); // always clean up the listener
+// Live preview — controlled time + playing from React state.
+<MediaPreview
+  project={project}
+  time={currentTimeMs}
+  playing={isPlaying}
+  onTime={({ nativeEvent }) => setCurrentTimeMs(nativeEvent.ms)}
+  onReady={({ nativeEvent }) => console.log('duration', nativeEvent.durationMs)}
+  style={{ width: 360, height: 640 }}
+/>
+
+// Final export — same Project, same compiler, identical pixels.
+const sub = addProgressListener(({ progress }) => {
+  console.log(`Export: ${Math.round(progress * 100)}%`);
+});
+const outputUri = await exportProject(project, undefined, { quality: 'medium' });
+sub.remove();
 ```
 
-To cancel an in-progress edit:
+To cancel an in-flight export:
 
 ```ts
-await cancelEdit(); // the editVideo() promise rejects with code "CANCELLED"
+await cancelExport(); // exportProject() promise rejects with code "CANCELLED"
 ```
 
 ## API
 
-### `editVideo(job: EditJob): Promise<string>`
+See `src/project.ts` for the complete schema (≈250 LOC) — it's the
+authoritative type definition. Highlights:
 
-Edit a video and return the URI of the output file.
+- `createProject(input)` — make a new Project. Sets `schemaVersion`,
+  generates an id if you didn't, computes `durationMs` from tracks.
+- `applyEdit(project, op)` — immutable mutation. `op` is a
+  discriminated union (`addVideoClip` / `removeClip` /
+  `replaceOverlay` / …). Returns a new Project; original is untouched.
+  Pair with your own undo stack.
+- `validateProject(project)` — structural check; returns
+  `{ ok: true }` or `{ ok: false; reason }`. Run before crossing the
+  JS↔native bridge.
+- `exportProject(project, outputUri?, opts?)` — render to MP4.
+- `cancelExport()` — cancel the in-flight export.
+- `addProgressListener(cb)` — subscribe to progress events
+  (`{ progress: 0..1 }`) during an export.
+- `getVideoInfo(uri)` — read duration / dims / fps / codec / size.
+- `generateThumbnail(uri, timeMs, opts?)` — JPEG frame extraction.
+- `extractAudio(uri)` — pull the audio track into a temp .m4a (useful
+  for SFSpeechRecognizer file-based recognition).
+- `cleanTempFiles()` — delete all expo-media-edit temp files.
 
-```ts
-type EditJob = {
-  inputUri: string;       // Local file URI (file://...) or https:// URL
-  outputUri?: string;     // Optional output path; defaults to a temp file
-  trim?: {
-    startMs: number;      // Start time in milliseconds
-    endMs: number;        // End time in milliseconds
-  };
-  overlays?: OverlayItem[];
-  audio?: AudioMix;
-  quality?: 'low' | 'medium' | 'high'; // Default: 'high'
-};
+### Text overlay knobs (all preserved from 0.11/0.12)
 
-type OverlayItem =
-  | {
-      type: 'text';
-      content: string;
-      x: number;              // 0.0–1.0 relative to video width
-      y: number;              // 0.0–1.0 relative to video height
-      anchor: 'topLeft' | 'center';        // how x/y are interpreted (required, 0.8.0)
-      textAlign: 'left' | 'center' | 'right'; // text alignment within the layer (required, 0.8.0)
-      paddingX: number;       // px at 1080-height reference; scaled like fontSize (required, 0.8.0)
-      paddingY: number;       // px at 1080-height reference; scaled like fontSize (required, 0.8.0)
-      fontSize?: number;      // Default: 32
-      color?: string;         // CSS hex, e.g. '#FFFFFF'. Default: '#FFFFFF'
-      fontWeight?: 'normal' | 'bold';
-      backgroundColor?: string;
-      cornerRadius?: number;  // px at 1080-height reference; rounds the bg box. Default: 0
-      // Outline + halo (0.11.0). Both required to render — providing one of a pair is a no-op.
-      strokeColor?: string;
-      strokeWidth?: number;   // px at 1080-height reference, scaled like fontSize
-      shadowColor?: string;
-      shadowRadius?: number;  // px at 1080-height reference, scaled like fontSize
-      shadowOpacity?: number; // 0..1, default 1
-      fontStyle?: 'normal' | 'italic';      // 0.11.0
-      fontFamily?: 'system' | 'monospace';  // 0.11.0
-      // Karaoke-style word highlight (0.12.0). All three required to render.
-      // The UTF-16 char range [highlightStart, highlightStart + highlightLength)
-      // of `content` is painted in highlightColor; the rest stays in `color`.
-      highlightColor?: string;
-      highlightStart?: number;
-      highlightLength?: number;
-      rotation?: number;      // degrees, default 0
-      startMs?: number;       // Show from this time (default: 0)
-      endMs?: number;         // Hide after this time (default: video end)
-    }
-  | {
-      type: 'image';
-      uri: string;            // Local image URI
-      x: number;
-      y: number;
-      width: number;          // 0.0–1.0 relative to video width
-      height: number;         // 0.0–1.0 relative to video height
-      opacity?: number;       // 0.0–1.0. Default: 1.0
-      startMs?: number;
-      endMs?: number;
-    };
+All the visual knobs from 0.11.0 (`strokeColor`/`strokeWidth`,
+`shadowColor`/`shadowRadius`/`shadowOpacity`, `fontStyle: italic`,
+`fontFamily: monospace`) and 0.12.0 (karaoke
+`highlightStart`/`highlightLength`/`highlightColor` over an explicit
+UTF-16 char range) are kept verbatim on `TextOverlayClip`.
 
-type AudioMix = {
-  uri: string;                // Local audio URI (.mp3, .m4a, .wav)
-  volume?: number;            // Music track volume 0.0–1.0. Default: 1.0
-  originalVolume?: number;    // Original audio volume 0.0–1.0. Default: 0.0
-  startMs?: number;           // Music start offset in ms. Default: 0
-  trimToVideo?: boolean;      // Cut music at video end. Default: true
-};
-```
+### Supported transitions
 
-### `getVideoInfo(uri: string): Promise<VideoInfo>`
+- `cut` — hard cut between clips
+- `fade` — cross-dissolve (iOS only in 0.14.0; collapses to `cut` on
+  Android — see CHANGELOG known limitations)
+- `fadeToBlack` — fade out to black + fade in (iOS only in 0.14.0)
 
-Read metadata about a video file.
-
-```ts
-type VideoInfo = {
-  durationMs: number;
-  width: number;
-  height: number;
-  fps: number;
-  fileSize: number;   // Bytes
-  codec?: string;
-};
-```
-
-### `generateThumbnail(uri: string, timeMs: number, options?: { width?: number; height?: number }): Promise<string>`
-
-Extract a JPEG thumbnail from a video at the given timestamp. Returns a `file://` URI.
-
-### `addProgressListener(callback: (event: ProgressEvent) => void): Subscription`
-
-Subscribe to progress events during `editVideo()`. Returns a subscription with a `remove()` method.
-
-```ts
-type ProgressEvent = { progress: number }; // 0.0–1.0
-```
-
-Always call `sub.remove()` after `editVideo()` resolves or rejects.
-
-### `cancelEdit(): Promise<void>`
-
-Cancel an in-progress `editVideo()` call. The `editVideo` promise rejects with error code `"CANCELLED"`.
-
-### `extractAudio(uri: string): Promise<string>`
-
-Strip the audio track from a video file into a temporary `.m4a`. Returns a `file://` URI pointing to the extracted audio. Useful when feeding video to APIs that only accept raw audio formats — e.g. iOS `SFSpeechRecognizer` via `AVAudioFile`, which can't read `.MOV`/`.MP4` containers directly but reads the extracted `.m4a` fine.
-
-- **iOS:** `AVAssetExportSession` with `AVAssetExportPresetAppleM4A`.
-- **Android:** `MediaExtractor` + `MediaMuxer` (stream-copy, no re-encode).
-- Rejects with `NO_AUDIO_TRACK` if the source has no audio track.
-
-```ts
-const m4aUri = await extractAudio(videoUri);
-// pass m4aUri to whatever audio-only API needs it
-```
-
-### `cleanTempFiles(): Promise<number>`
-
-Delete all temporary files created by expo-media-edit. Returns the number of files deleted.
+Slide transition was removed in 0.14.0 (PO decision).
 
 ## Platform notes
 
 ### iOS
 
-Uses AVFoundation:
-- **Trim**: `AVAssetExportSession` with a time range — lossless stream copy.
-- **Overlays**: `AVVideoCompositionCoreAnimationTool` with `CATextLayer` / `CALayer` burn-in.
-- **Audio**: `AVMutableAudioMixInputParameters` for volume control; additional `AVMutableCompositionTrack` for music.
+- **Compile:** `ProjectCompiler.swift` builds
+  `AVMutableComposition` + `AVMutableVideoComposition` +
+  `AVAudioMix`. Overlays draw into a `CALayer` tree via
+  `AVVideoCompositionCoreAnimationTool` — same as 0.13.x but reshaped
+  to consume `ProjectOverlayClip` directly.
+- **Preview:** `<MediaPreview>` is an `AVPlayer` + `AVPlayerLayer`
+  fed by the compiled composition. Zero-tolerance seek; periodic
+  time observer at 30fps.
+- **Export:** `AVAssetExportSession` consumes the same composition.
 
 ### Android
 
-Uses MediaCodec + MediaMuxer:
-- **Trim**: `MediaExtractor` + `MediaMuxer` stream copy (no re-encode).
-- **Overlays**: Frame-by-frame decode via `MediaMetadataRetriever`, Canvas draw, YUV420 re-encode via `MediaCodec`. Quality controlled via bitrate (low: 1Mbps, medium: 2Mbps, high: 4Mbps).
-- **Audio**: Stream copy when `volume == 1.0`; PCM decode → scale → AAC re-encode for other volume values. Rotation metadata preserved via `MediaMuxer.setOrientationHint()`.
-
-## Known limitations
-
-- Background processing is not supported (the app must stay in the foreground during editing).
-- Android audio mixing does not support simultaneous multi-track volume scaling (original + music both at non-1.0 volume in the same output file). Each track is scaled independently.
+- **Compile:** `ProjectCompiler.kt` builds an
+  `androidx.media3.transformer.Composition` with one
+  `EditedMediaItemSequence` per video track plus per-audio-track
+  audio-only sequences.
+- **Text/image overlays go through `BitmapOverlay`, NOT media3's
+  native `TextOverlay`.** The existing Canvas-based renderer
+  (`OverlayBitmapRenderer.kt`) renders all overlays into a single
+  full-frame bitmap per frame bucket (100ms snapping), wrapped in a
+  single `BitmapOverlay` attached to the Composition's `OverlayEffect`.
+  Per-glyph `Paint.setShadowLayer`, `Paint.STROKE` outlines and
+  `SpannableString` karaoke highlights all keep working unchanged.
+- **Preview:** `<MediaPreview>` is a `PlayerView` + `CompositionPlayer`
+  fed by the same Composition.
+- **Export:** `androidx.media3.transformer.Transformer`.
 
 ## Changelog
 

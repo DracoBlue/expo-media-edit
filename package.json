@@ -1,7 +1,7 @@
 {
   "name": "expo-media-edit",
-  "version": "0.13.0",
-  "description": "Native video editing for Expo — trim, overlay text/images, mix audio. No FFmpeg.",
+  "version": "0.14.0",
+  "description": "Native video composer for Expo — Project document, native preview (AVFoundation + media3), single-source-of-truth render. No FFmpeg.",
   "main": "build/index.js",
   "types": "build/index.d.ts",
   "scripts": {
@@ -26,8 +26,10 @@
     "editing",
     "trim",
     "overlay",
+    "composer",
+    "preview",
     "avfoundation",
-    "mediacodec"
+    "media3"
   ],
   "repository": {
     "type": "git",

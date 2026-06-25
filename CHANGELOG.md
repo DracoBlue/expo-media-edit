@@ -2,6 +2,111 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.0] - 2026-06-25
+
+### Breaking
+
+- **`editVideo(EditJob)` removed.** Replaced by
+  `exportProject(project, outputUri?, opts?)` taking a Project document
+  (see `src/project.ts`). All EditJob / OverlayItem / PlaylistItem /
+  AudioMix / Transition types are gone.
+- **`cancelEdit()` → `cancelExport()`.** Same lifecycle, renamed.
+- **Slide transition removed.** Only `cut`, `fade`, `fadeToBlack`
+  remain. media3 has no built-in push-slide and implementing one would
+  have required a custom MatrixTransformation + multi-sequence
+  Composition layering — out of scope for this release. PO decision
+  2026-06-25.
+
+### Added
+
+- **`Project` schema** (`src/project.ts`) — JSON-serialisable single
+  source of truth describing tracks (video/audio/overlay), clips,
+  transitions, overlays with all 0.11/0.12 text knobs, and a
+  duration. Includes `createProject`, `applyEdit` immutable mutations,
+  `projectDurationMs`, `validateProject`.
+- **`<MediaPreview project time playing ... />`** — native preview
+  component. Same Project, same `ProjectCompiler` output that feeds
+  `exportProject`, in an AVPlayer (iOS) / CompositionPlayer (Android).
+  Preview pixels == export pixels. Emits `onTime`, `onReady`, `onError`.
+- **`exportProject(project, outputUri?, opts?)`** — render a Project
+  to MP4 via AVAssetExportSession (iOS) / Transformer (Android).
+- **Android: adopts `androidx.media3` 1.5.1** for the composer.
+  Replaces the hand-rolled MediaCodec/MediaMuxer pipeline. New deps:
+  `media3-{common,exoplayer,ui,effect,transformer}`.
+
+### Design decisions
+
+- **Android text overlays go through `BitmapOverlay`, NOT media3's
+  native `TextOverlay`.** The existing Canvas-based renderer
+  (per-glyph `Paint.setShadowLayer`, `Paint.STROKE` outline pass,
+  `SpannableString` + `ForegroundColorSpan` karaoke highlight,
+  italic/monospace Typeface) is the only way to keep 100% fidelity
+  with the iOS NSAttributedString path. media3 TextOverlay can't
+  express all of those knobs cleanly. The Canvas code lives in
+  `OverlayBitmapRenderer.kt`; `ProjectFrameOverlay` is a single full-
+  frame BitmapOverlay subclass with a 100ms-bucket LruCache that
+  re-renders on demand.
+- **Audio mixing is fully native in both preview and export.** The
+  Project's audio tracks (music / voice-over) play through the
+  Composition's audio mix — kiesel-side `expo-audio` parallel-player
+  hack goes away in the matching kiesel migration.
+
+### Known limitations (V1, to be addressed in 0.14.1)
+
+- **Android: inter-clip `fade` / `fadeToBlack` transitions collapse
+  to `cut`.** Implementing proper crossfade between items in media3
+  requires multi-sequence Composition layering with timed alpha
+  overlays or a custom GlEffect. iOS handles all three transitions
+  correctly via `AVMutableVideoCompositionInstruction.setOpacityRamp`.
+- Per-clip volume ramps not yet emitted (clips honour `originalVolume`
+  as a 0-or-1 mute toggle on Android; iOS reads the field but applies
+  it as a flat per-track volume, not a ramp).
+- No keyframe animations for transform/volume properties yet
+  (schema supports it via `Keyframed<T>`, compilers don't read it).
+
+### Removed (legacy files)
+
+- iOS: `OverlayCompositor.swift`, `VideoEditor.swift`, `AudioMixer.swift`
+  → replaced by `OverlayRenderer.swift` + `ProjectCompiler.swift` +
+  `ProjectExporter.swift`. `SecurityValidation.swift` retained.
+- Android: `OverlayCompositor.kt`, `PlaylistCompositor.kt`,
+  `VideoEditor.kt`, `VideoTrimmer.kt`, `AudioMixer.kt`, `Models.kt`
+  → replaced by `OverlayBitmapRenderer.kt`, `ProjectCompiler.kt`,
+  `ProjectExporter.kt`, `MediaPreviewView.kt`, `ProjectModel.kt`.
+  `Utils.kt` retained.
+
+### Migration
+
+```ts
+// 0.13.x
+import { editVideo, addProgressListener } from 'expo-media-edit';
+const out = await editVideo({
+  inputUri, trim: { startMs: 0, endMs: 5000 },
+  overlays: [...], audio: { uri: musicUri, volume: 0.8 },
+});
+
+// 0.14.0
+import { exportProject, createProject, addProgressListener } from 'expo-media-edit';
+const project = createProject({
+  canvasSize: { width: 1080, height: 1920 },
+  tracks: [
+    { kind: 'video', id: 'v', clips: [{
+      id: 'c1', sourceUri: inputUri,
+      sourceRange: { startMs: 0, endMs: 5000 },
+      timelineRange: { startMs: 0, endMs: 5000 },
+    }]},
+    { kind: 'audio', id: 'a', clips: [{
+      id: 'm1', sourceUri: musicUri,
+      sourceRange: { startMs: 0, endMs: 5000 },
+      timelineRange: { startMs: 0, endMs: 5000 },
+      volume: 0.8,
+    }]},
+    { kind: 'overlay', id: 'o', items: [...] },
+  ],
+});
+const out = await exportProject(project, undefined, { quality: 'medium' });
+```
+
 ## [0.13.0] - 2026-06-18
 
 ### Changed (visual)
