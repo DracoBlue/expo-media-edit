@@ -61,6 +61,23 @@ public class ProjectCompiler {
     var currentTime = CMTime.zero
     var prevSrcTransform = CGAffineTransform.identity
 
+    // Preview-mode renderScale: shrink the videoComposition's
+    // renderSize AND multiply every per-clip transform by the same
+    // factor so the source maps into the smaller canvas correctly.
+    // Without the transform scaling, the source draws at its full
+    // pixel size into the smaller canvas → only the top-left
+    // quadrant is visible → apparent 2× zoom.
+    let previewScale: CGFloat = {
+      if case .preview(let s) = mode { return max(0.1, min(1.0, s)) }
+      return 1.0
+    }()
+    let previewScaleTx = CGAffineTransform(scaleX: previewScale, y: previewScale)
+
+    // `fitTransform` returns the transform that maps the source's
+    // rendered (post-preferredTransform) rectangle into the FULL
+    // renderSize, aspect-fit + centered. The preview-scale multiply
+    // happens at the use site (every setTransform call) so the
+    // composition reads cleanly: fit → preview-scale.
     func fitTransform(_ srcTrack: AVAssetTrack) -> CGAffineTransform {
       let pt = srcTrack.preferredTransform
       let rendered = srcTrack.naturalSize.applying(pt)
@@ -74,6 +91,21 @@ public class ProjectCompiler {
       return pt
         .concatenating(CGAffineTransform(scaleX: scale, y: scale))
         .concatenating(CGAffineTransform(translationX: dx, y: dy))
+    }
+
+    // Wrap setTransform so every layer instruction picks up the
+    // preview-scale uniformly. Calling this — not setTransform
+    // directly — is what guarantees the per-clip transforms stay in
+    // sync with the (preview-scaled) videoComposition.renderSize.
+    func setScaledTransform(_ li: AVMutableVideoCompositionLayerInstruction, _ tx: CGAffineTransform, at time: CMTime) {
+      li.setTransform(tx.concatenating(previewScaleTx), at: time)
+    }
+    func setScaledTransformRamp(_ li: AVMutableVideoCompositionLayerInstruction, from start: CGAffineTransform, to end: CGAffineTransform, timeRange: CMTimeRange) {
+      li.setTransformRamp(
+        fromStart: start.concatenating(previewScaleTx),
+        toEnd: end.concatenating(previewScaleTx),
+        timeRange: timeRange
+      )
     }
 
     // Per-clip composition: walk video clips in order, build asset +
@@ -121,7 +153,7 @@ public class ProjectCompiler {
         let inst = AVMutableVideoCompositionInstruction()
         inst.timeRange = CMTimeRange(start: currentTime, duration: itemDuration)
         let li = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
-        li.setTransform(srcTx, at: currentTime)
+        setScaledTransform(li, srcTx, at: currentTime)
         inst.layerInstructions = [li]
         instructions.append(inst)
         currentTime = currentTime + itemDuration
@@ -141,10 +173,10 @@ public class ProjectCompiler {
         let overlapInst = AVMutableVideoCompositionInstruction()
         overlapInst.timeRange = overlapRange
         let prevLI = AVMutableVideoCompositionLayerInstruction(assetTrack: prevTrack)
-        prevLI.setTransform(prevSrcTransform, at: insertAt)
+        setScaledTransform(prevLI, prevSrcTransform, at: insertAt)
         prevLI.setOpacityRamp(fromStartOpacity: 1.0, toEndOpacity: 0.0, timeRange: overlapRange)
         let currLI = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
-        currLI.setTransform(srcTx, at: insertAt)
+        setScaledTransform(currLI, srcTx, at: insertAt)
         currLI.setOpacityRamp(fromStartOpacity: 0.0, toEndOpacity: 1.0, timeRange: overlapRange)
         overlapInst.layerInstructions = [currLI, prevLI]
         instructions.append(overlapInst)
@@ -155,7 +187,7 @@ public class ProjectCompiler {
           let afterInst = AVMutableVideoCompositionInstruction()
           afterInst.timeRange = CMTimeRange(start: afterStart, end: itemEnd)
           let afterLI = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
-          afterLI.setTransform(srcTx, at: afterStart)
+          setScaledTransform(afterLI, srcTx, at: afterStart)
           afterInst.layerInstructions = [afterLI]
           instructions.append(afterInst)
         }
@@ -179,7 +211,7 @@ public class ProjectCompiler {
         let inst = AVMutableVideoCompositionInstruction()
         inst.timeRange = CMTimeRange(start: currentTime, end: itemEnd)
         let li = AVMutableVideoCompositionLayerInstruction(assetTrack: currTrack)
-        li.setTransform(srcTx, at: currentTime)
+        setScaledTransform(li, srcTx, at: currentTime)
         li.setOpacityRamp(fromStartOpacity: 0.0, toEndOpacity: 1.0, timeRange: CMTimeRange(start: currentTime, end: fadeInEnd))
         inst.layerInstructions = [li]
         instructions.append(inst)
@@ -202,18 +234,16 @@ public class ProjectCompiler {
       }
     }
 
-    // 0.15.1: the preview-mode renderScale is currently IGNORED.
-    // Halving renderSize without also halving every layer
-    // instruction's transform would draw the source at full size into
-    // the smaller canvas → apparent 2x zoom (bug PO 2026-06-25).
-    // AVMutableVideoCompositionLayerInstruction doesn't expose a clean
-    // accessor for the active transform so post-scaling is fiddly; for
-    // now we render preview at full source res and let AVPlayerLayer
-    // scale for display. Callers can still pass renderScale, it just
-    // has no effect on iOS. Will be revisited if scrub-time perf
-    // measurements show it's worth the extra plumbing.
+    // Preview-mode renderScale shrinks the videoComposition's output
+    // dimensions; the matching per-clip transforms above were already
+    // pre-multiplied by previewScale via setScaledTransform so the
+    // source content fits the smaller canvas correctly.
+    let finalRenderSize = CGSize(
+      width: renderSize.width * previewScale,
+      height: renderSize.height * previewScale,
+    )
     let videoComposition = AVMutableVideoComposition()
-    videoComposition.renderSize = renderSize
+    videoComposition.renderSize = finalRenderSize
     videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(project.fps))
     videoComposition.instructions = instructions
 

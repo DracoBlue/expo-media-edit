@@ -20,14 +20,17 @@ All notable changes to this project will be documented in this file.
   RN/UIKit views layered on top of `<MediaPreview>`. Real native
   preview-overlays via `AVSynchronizedLayer` are scheduled for a
   later release.
-- **Preview render scale temporarily ignored (always 1.0).** Halving
-  `renderSize` without also scaling every layer instruction's
-  transform produced a 2x zoom in the preview canvas (PO repro
-  2026-06-25 — the muppet head filled the entire frame). Until we
-  wire up clean transform-rescaling for the preview path, preview
-  renders at full source resolution and AVPlayerLayer scales for
-  display. `renderScale` prop still accepted for API symmetry but
-  has no effect on iOS.
+- **Preview render scale now works correctly.** The 0.15.0 code
+  shrank `videoComposition.renderSize` by the preview-scale factor
+  but left every per-clip layer-instruction transform sized against
+  the ORIGINAL render size → source drew at full pixel size into the
+  smaller canvas → only the top-left quadrant visible → apparent 2x
+  zoom (PO repro 2026-06-25 — muppet head filled the entire frame).
+  Fix: every `setTransform` / `setTransformRamp` call now goes
+  through `setScaledTransform[Ramp]` helpers that pre-multiply the
+  transform by the preview-scale matrix. `previewScale < 1` reduces
+  both renderSize AND the per-clip transforms in lockstep, so the
+  composition layout is invariant.
 
 ### Carry-over from 0.15.0
 
