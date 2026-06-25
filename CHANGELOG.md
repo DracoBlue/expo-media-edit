@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.2] - 2026-06-25
+
+### Fixed (iOS)
+
+- **`<MediaPreview>` now renders overlays during playback.** 0.15.1
+  skipped overlay attachment in preview-mode to dodge the
+  `AVVideoCompositionCoreAnimationTool` + `AVPlayerItem`
+  incompatibility, which meant subtitles / stickers / text overlays
+  were invisible while editing — Preview ≠ Export. Fix: build the
+  CALayer tree via `OverlayRenderer.buildOverlayLayer(...)` (new
+  shared helper) and wrap it in `AVSynchronizedLayer(playerItem:)`
+  inside `MediaPreviewView`. `AVSynchronizedLayer` is the
+  AVFoundation API for CoreAnimation overlays in playback — its
+  sublayers' `CAKeyframeAnimation` opacity windows are driven by
+  the player clock, so timing-windowed overlays appear/disappear in
+  sync with playback. Same OverlayRenderer code, same per-glyph
+  NSShadow + stroke approximation + karaoke highlight — preview
+  pixels == export pixels again.
+- **Overlay layer auto-positions onto the video rect.**
+  `MediaPreviewView` observes `AVPlayerLayer.videoRect` and scales
+  the synced layer to match the on-screen (post-letterbox) video
+  rectangle. Resize / asset-load / device-rotation re-layouts are
+  picked up via KVO without any JS-side glue.
+
+### Internals
+
+- `OverlayRenderer.attachOverlays(...)` (export path) is now a thin
+  wrapper around `buildOverlayLayer(...)`. Both paths consume the
+  same per-clip Text / Image builders — no duplicate code.
+
 ## [0.15.1] - 2026-06-25
 
 ### Fixed (iOS)

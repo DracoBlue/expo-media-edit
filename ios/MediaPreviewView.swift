@@ -7,15 +7,35 @@ import UIKit
 /// `project` prop changes. Time scrubbing is controlled from JS via
 /// the `time` prop; playback is controlled via `playing`.
 ///
-/// Both the preview here and `exportProject` run through the SAME
-/// ProjectCompiler — so what you see during scrub is what lands in
-/// the exported MP4.
+/// Overlays are rendered as a CALayer tree wrapped in an
+/// AVSynchronizedLayer attached to the playerItem — the layer's
+/// timed animations are driven by the player's clock so subtitle /
+/// sticker / text overlays appear and disappear in sync with the
+/// underlying video. This is the API-correct way to do
+/// CoreAnimation overlays in PLAYBACK; `AVVideoCompositionCoreAnimationTool`
+/// is offline-only and crashes AVPlayerItem.
+///
+/// Same OverlayRenderer code produces the layer tree for both the
+/// export pipeline (animationTool) and this preview path
+/// (AVSynchronizedLayer) — preview pixels == export pixels.
 public class MediaPreviewView: ExpoView {
 
   private let playerLayer = AVPlayerLayer()
   private var player: AVPlayer?
   private var compiled: CompiledComposition?
   private var timeObserver: Any?
+
+  // Overlay layer hierarchy. The synced layer hosts the overlay
+  // parent; both get re-positioned in layoutSubviews() so the
+  // overlays sit ON the video rect (post-aspect-fit), not the full
+  // bounds.
+  private var syncedLayer: AVSynchronizedLayer?
+  private var overlayParent: CALayer?
+  private var overlayRenderSize: CGSize = .zero
+  // Observer for AVPlayerLayer.videoRect (which changes as the
+  // surface resizes and the asset loads). When it fires we
+  // reposition the synced layer to match.
+  private var videoRectObserver: NSKeyValueObservation?
 
   /// External controlled state — assigned from props by the bridge.
   /// `pendingTimeMs` decouples "JS asks for time X" from "player is
@@ -36,11 +56,20 @@ public class MediaPreviewView: ExpoView {
     playerLayer.videoGravity = .resizeAspect
     layer.addSublayer(playerLayer)
     backgroundColor = .black
+
+    // videoRect on AVPlayerLayer reports where the video actually
+    // shows (post-letterboxing). It's nil/empty until the asset
+    // loads, then settles. We watch it so the synced overlay layer
+    // re-positions onto the video rect after load.
+    videoRectObserver = playerLayer.observe(\.videoRect, options: [.new]) { [weak self] _, _ in
+      DispatchQueue.main.async { self?.layoutOverlayLayer() }
+    }
   }
 
   public override func layoutSubviews() {
     super.layoutSubviews()
     playerLayer.frame = bounds
+    layoutOverlayLayer()
   }
 
   // MARK: - Prop setters (called from the Expo Module's View(...) Prop blocks)
@@ -66,6 +95,38 @@ public class MediaPreviewView: ExpoView {
       installTimeObserver(on: p)
       self.player = p
       playerLayer.player = p
+
+      // Rebuild the overlay layer for this composition. Collect every
+      // overlay clip from the project's overlay tracks — OverlayRenderer
+      // produces a CALayer tree sized against the videoComposition's
+      // (preview-scaled) renderSize. Wrap in AVSynchronizedLayer so the
+      // sublayers' CAKeyframeAnimations (opacity timing windows) are
+      // driven by the player clock.
+      var overlays: [ProjectOverlayClip] = []
+      for t in project.tracks {
+        if case .overlay(_, let items) = t {
+          overlays.append(contentsOf: items)
+        }
+      }
+      let renderSize = cc.videoComposition.renderSize
+      overlayRenderSize = renderSize
+      if let parent = OverlayRenderer.buildOverlayLayer(
+        overlays: overlays,
+        videoSize: renderSize,
+        videoTotalDuration: cc.composition.duration
+      ) {
+        let synced = AVSynchronizedLayer(playerItem: playerItem)
+        synced.addSublayer(parent)
+        layer.addSublayer(synced)
+        syncedLayer = synced
+        overlayParent = parent
+        // Disable implicit animations on the synced layer's bounds /
+        // position changes so resizes don't tween.
+        synced.actions = ["bounds": NSNull(), "position": NSNull(), "transform": NSNull()]
+        parent.actions = ["bounds": NSNull(), "position": NSNull(), "transform": NSNull()]
+        layoutOverlayLayer()
+      }
+
       onReady(["durationMs": project.durationMs])
       if let t = pendingTimeMs { seek(to: t) }
       if pendingPlaying { p.play() }
@@ -117,9 +178,47 @@ public class MediaPreviewView: ExpoView {
     player?.pause()
     player = nil
     playerLayer.player = nil
+    syncedLayer?.removeFromSuperlayer()
+    syncedLayer = nil
+    overlayParent = nil
+  }
+
+  // MARK: - Overlay layout
+
+  /// Position the synced overlay layer so its coordinate system maps
+  /// 1:1 onto the on-screen video rectangle. The overlay parent was
+  /// built against `overlayRenderSize` (the videoComposition's
+  /// renderSize); we scale it to fit the playerLayer's videoRect.
+  private func layoutOverlayLayer() {
+    guard let synced = syncedLayer, let parent = overlayParent,
+          overlayRenderSize.width > 0, overlayRenderSize.height > 0 else { return }
+    let videoRect = playerLayer.videoRect
+    if videoRect.isEmpty {
+      // Asset hasn't loaded yet — fall back to the full bounds so
+      // overlays appear immediately at the right scale, then snap
+      // when videoRect becomes available.
+      let r = bounds.isEmpty ? CGRect(origin: .zero, size: overlayRenderSize) : bounds
+      synced.frame = r
+    } else {
+      synced.frame = videoRect
+    }
+
+    // Parent renders in overlayRenderSize coords. Scale it to fit
+    // synced.frame. Translate origin to (0, 0) of synced.
+    parent.frame = CGRect(origin: .zero, size: overlayRenderSize)
+    let sx = synced.frame.width / overlayRenderSize.width
+    let sy = synced.frame.height / overlayRenderSize.height
+    // anchorPoint at (0,0) so scaling happens from the top-left;
+    // matches the CoreAnimation flipped-Y convention OverlayRenderer
+    // already uses for layout.
+    parent.anchorPoint = .zero
+    parent.position = .zero
+    parent.transform = CATransform3DMakeScale(sx, sy, 1)
   }
 
   deinit {
+    videoRectObserver?.invalidate()
+    videoRectObserver = nil
     tearDownPlayer()
     // Best-effort cleanup of preview-pass temp files.
     compiled?.cleanupURLs.forEach { try? FileManager.default.removeItem(at: $0) }

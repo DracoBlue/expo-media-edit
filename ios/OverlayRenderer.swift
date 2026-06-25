@@ -7,30 +7,33 @@ import QuartzCore
 /// stroke approximation, Karaoke explicit-range highlight). API
 /// reshaped to consume ProjectModel types directly so the same code
 /// serves both the exporter and the live preview view.
+///
+/// TWO output paths, same layer-building code:
+///   - `attachOverlays(...)` wraps the layers in
+///     AVVideoCompositionCoreAnimationTool — used by ProjectExporter
+///     (AVAssetExportSession, offline-render-only).
+///   - `buildOverlayLayer(...)` returns the bare parent CALayer
+///     for AVSynchronizedLayer — used by MediaPreviewView (real-time
+///     playback, where the animationTool API is forbidden).
 public class OverlayRenderer {
 
-  /// Apply overlays to a freshly-built or already-constructed
-  /// AVMutableVideoComposition. Mutates the videoComposition in
-  /// place (sets its animationTool) and returns the same instance.
+  /// Build the overlay CALayer tree for `overlays` sized against
+  /// `videoSize`. Caller decides whether to wrap in
+  /// AVVideoCompositionCoreAnimationTool (export) or
+  /// AVSynchronizedLayer (preview). `videoTotalDuration` is needed so
+  /// `applyTimingAnimation` can compute keyTime fractions when
+  /// overlays have a timelineRange.
   ///
-  /// `videoTotalDuration` is needed so `applyTimingAnimation` can
-  /// compute keyTime fractions when overlays have a timelineRange.
-  public static func attachOverlays(
-    to videoComposition: AVMutableVideoComposition,
+  /// Returns nil when there are no overlays — caller can short-circuit
+  /// without an empty parent layer.
+  public static func buildOverlayLayer(
     overlays: [ProjectOverlayClip],
+    videoSize: CGSize,
     videoTotalDuration: CMTime
-  ) {
-    guard !overlays.isEmpty else { return }
-
-    let videoSize = videoComposition.renderSize
-
+  ) -> CALayer? {
+    guard !overlays.isEmpty else { return nil }
     let parentLayer = CALayer()
     parentLayer.frame = CGRect(origin: .zero, size: videoSize)
-
-    let videoLayer = CALayer()
-    videoLayer.frame = CGRect(origin: .zero, size: videoSize)
-    parentLayer.addSublayer(videoLayer)
-
     for overlay in overlays {
       switch overlay {
       case .text(let opts):
@@ -41,6 +44,39 @@ public class OverlayRenderer {
           parentLayer.addSublayer(layer)
         }
       }
+    }
+    return parentLayer
+  }
+
+  /// Export path: attach overlays as an
+  /// AVVideoCompositionCoreAnimationTool on the videoComposition.
+  /// This wraps `buildOverlayLayer` with the additional video-layer
+  /// container the tool requires. OFFLINE RENDER ONLY — never use
+  /// on a videoComposition that gets handed to AVPlayerItem.
+  public static func attachOverlays(
+    to videoComposition: AVMutableVideoComposition,
+    overlays: [ProjectOverlayClip],
+    videoTotalDuration: CMTime
+  ) {
+    guard let overlaysLayer = buildOverlayLayer(
+      overlays: overlays,
+      videoSize: videoComposition.renderSize,
+      videoTotalDuration: videoTotalDuration
+    ) else { return }
+
+    let videoSize = videoComposition.renderSize
+    let parentLayer = CALayer()
+    parentLayer.frame = CGRect(origin: .zero, size: videoSize)
+
+    let videoLayer = CALayer()
+    videoLayer.frame = CGRect(origin: .zero, size: videoSize)
+    parentLayer.addSublayer(videoLayer)
+
+    // The overlays layer's own sublayers were created against the
+    // same `videoSize`; we re-parent them into the
+    // animationTool's parent layer (sitting above the videoLayer).
+    for sublayer in overlaysLayer.sublayers ?? [] {
+      parentLayer.addSublayer(sublayer)
     }
 
     videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
