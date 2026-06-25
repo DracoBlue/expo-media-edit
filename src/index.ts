@@ -1,226 +1,88 @@
-export { EditJob, OverlayItem, TextOverlay, ImageOverlay, AudioMix, VideoInfo, ThumbnailOptions, ProgressEvent, Transition, PlaylistItem } from './types';
+/**
+ * expo-media-edit 0.14.0 — Project-based video composer
+ *
+ * The public API is built around `Project` (src/project.ts), a pure-
+ * data document describing tracks/clips/overlays. Both the preview
+ * view (<MediaPreview />) and the exporter (`exportProject`) compile
+ * the SAME Project into a native composition — preview pixels equal
+ * export pixels.
+ *
+ * The 0.13.x `editVideo(EditJob)` API is REMOVED in 0.14.0. Callers
+ * must migrate to `exportProject(project)`. See CHANGELOG.md.
+ */
 
 import ExpoMediaEditModule, { emitter } from './ExpoMediaEditModule';
-import type { EditJob, VideoInfo, ThumbnailOptions, ProgressEvent, PlaylistItem } from './types';
+import type { Project } from './project';
+import type { VideoInfo, ThumbnailOptions, ProgressEvent } from './types';
+
+// Re-exports: the Project schema is the new public surface.
+export * from './project';
+export type { VideoInfo, ThumbnailOptions, ProgressEvent } from './types';
+export { default as MediaPreview, type MediaPreviewProps } from './MediaPreviewView';
+
+// ─── URI guards (kept from 0.13.x, still defence-in-depth) ──────────
 
 function validateUri(uri: string, label: string): void {
-  if (uri.includes('\0')) {
-    throw new Error(`${label} must not contain null bytes.`);
-  }
-  if (uri.includes('../')) {
-    throw new Error(`${label} must not contain path traversal sequences.`);
-  }
+  if (uri.includes('\0')) throw new Error(`${label} must not contain null bytes.`);
+  if (uri.includes('../')) throw new Error(`${label} must not contain path traversal sequences.`);
   if (!uri.startsWith('file://') && !uri.startsWith('https://')) {
     throw new Error(`${label} must be a file:// or https:// URI.`);
   }
 }
 
-// Output is written (and may overwrite/delete an existing file), so it must be a
-// local file:// URI. The native side additionally confirms the resolved path stays
-// inside the app's writable sandbox directories — this is only the syntactic gate.
 function validateOutputUri(uri: string, label: string): void {
-  if (uri.includes('\0')) {
-    throw new Error(`${label} must not contain null bytes.`);
-  }
-  if (uri.includes('../')) {
-    throw new Error(`${label} must not contain path traversal sequences.`);
-  }
-  if (!uri.startsWith('file://')) {
-    throw new Error(`${label} must be a file:// URI.`);
-  }
+  if (uri.includes('\0')) throw new Error(`${label} must not contain null bytes.`);
+  if (uri.includes('../')) throw new Error(`${label} must not contain path traversal sequences.`);
+  if (!uri.startsWith('file://')) throw new Error(`${label} must be a file:// URI.`);
 }
 
-function validatePlaylistItem(item: PlaylistItem, index: number): void {
-  if (item.type !== 'video' && item.type !== 'image') {
-    throw new Error(`editVideo: playlist[${index}].type must be 'video' or 'image'.`);
-  }
-  if (!item.uri || typeof item.uri !== 'string') {
-    throw new Error(`editVideo: playlist[${index}].uri is required.`);
-  }
-  validateUri(item.uri, `editVideo: playlist[${index}].uri`);
-  if (item.type === 'image') {
-    if (typeof item.durationMs !== 'number' || item.durationMs <= 0) {
-      throw new Error(`editVideo: playlist[${index}].durationMs must be a positive number.`);
-    }
-  }
-  if (item.type === 'video' && item.trim !== undefined) {
-    if (item.trim.startMs < 0) throw new Error(`editVideo: playlist[${index}].trim.startMs must be >= 0.`);
-    if (item.trim.startMs >= item.trim.endMs) throw new Error(`editVideo: playlist[${index}].trim.startMs must be less than endMs.`);
-  }
-  if (item.transition !== undefined) {
-    const t = item.transition;
-    if (t.type !== 'cut' && t.type !== 'fade' && t.type !== 'fadeToBlack' && t.type !== 'slide') {
-      throw new Error(`editVideo: playlist[${index}].transition.type must be 'cut', 'fade', 'fadeToBlack', or 'slide'.`);
-    }
-    if ((t.type === 'fade' || t.type === 'fadeToBlack' || t.type === 'slide') && (typeof t.durationMs !== 'number' || t.durationMs <= 0)) {
-      throw new Error(`editVideo: playlist[${index}].transition.durationMs must be a positive number.`);
-    }
-  }
-}
+// ─── Export ─────────────────────────────────────────────────────────
 
-function validateEditJob(job: EditJob): void {
-  const hasPlaylist = Array.isArray(job.playlist) && job.playlist.length > 0;
-  const hasInputUri = typeof job.inputUri === 'string' && job.inputUri.trim() !== '';
-
-  if (!hasPlaylist && !hasInputUri) {
-    throw new Error('editVideo: either inputUri or playlist is required.');
-  }
-  if (typeof job.outputUri === 'string' && job.outputUri.trim() !== '') {
-    validateOutputUri(job.outputUri, 'editVideo: outputUri');
-  }
-  if (hasInputUri) {
-    validateUri(job.inputUri!, 'editVideo: inputUri');
-  }
-  if (hasPlaylist) {
-    for (let i = 0; i < job.playlist!.length; i++) {
-      validatePlaylistItem(job.playlist![i], i);
-    }
-  }
-  if (!hasPlaylist && job.trim !== undefined) {
-    if (typeof job.trim.startMs !== 'number' || typeof job.trim.endMs !== 'number') {
-      throw new Error('editVideo: trim.startMs and trim.endMs must be numbers.');
-    }
-    if (job.trim.startMs < 0) {
-      throw new Error('editVideo: trim.startMs must be >= 0.');
-    }
-    if (job.trim.startMs >= job.trim.endMs) {
-      throw new Error('editVideo: trim.startMs must be less than trim.endMs.');
-    }
-  }
-  if (job.overlays !== undefined) {
-    for (let i = 0; i < job.overlays.length; i++) {
-      const overlay = job.overlays[i];
-      if (overlay.type !== 'text' && overlay.type !== 'image') {
-        throw new Error(`editVideo: overlays[${i}].type must be 'text' or 'image'.`);
-      }
-      if (typeof overlay.x !== 'number' || overlay.x < 0 || overlay.x > 1) {
-        throw new Error(`editVideo: overlays[${i}].x must be a number between 0.0 and 1.0.`);
-      }
-      if (typeof overlay.y !== 'number' || overlay.y < 0 || overlay.y > 1) {
-        throw new Error(`editVideo: overlays[${i}].y must be a number between 0.0 and 1.0.`);
-      }
-      if (overlay.type === 'text') {
-        if (!overlay.content || typeof overlay.content !== 'string') {
-          throw new Error(`editVideo: overlays[${i}].content is required for text overlays.`);
-        }
-        if (overlay.anchor !== 'topLeft' && overlay.anchor !== 'center') {
-          throw new Error(`editVideo: overlays[${i}] must include anchor / textAlign / paddingX / paddingY (anchor must be 'topLeft' or 'center').`);
-        }
-        if (overlay.textAlign !== 'left' && overlay.textAlign !== 'center' && overlay.textAlign !== 'right') {
-          throw new Error(`editVideo: overlays[${i}] must include anchor / textAlign / paddingX / paddingY (textAlign must be 'left', 'center', or 'right').`);
-        }
-        if (typeof overlay.paddingX !== 'number') {
-          throw new Error(`editVideo: overlays[${i}] must include anchor / textAlign / paddingX / paddingY (paddingX must be a number).`);
-        }
-        if (typeof overlay.paddingY !== 'number') {
-          throw new Error(`editVideo: overlays[${i}] must include anchor / textAlign / paddingX / paddingY (paddingY must be a number).`);
-        }
-        // 0.11.0 optional knobs — validate range / type but keep
-        // missing values silent (every new field is optional).
-        if (overlay.fontStyle !== undefined && overlay.fontStyle !== 'normal' && overlay.fontStyle !== 'italic') {
-          throw new Error(`editVideo: overlays[${i}].fontStyle must be 'normal' or 'italic'.`);
-        }
-        if (overlay.fontFamily !== undefined && overlay.fontFamily !== 'system' && overlay.fontFamily !== 'monospace') {
-          throw new Error(`editVideo: overlays[${i}].fontFamily must be 'system' or 'monospace'.`);
-        }
-        if (overlay.strokeWidth !== undefined && (typeof overlay.strokeWidth !== 'number' || overlay.strokeWidth < 0)) {
-          throw new Error(`editVideo: overlays[${i}].strokeWidth must be a non-negative number.`);
-        }
-        if (overlay.shadowRadius !== undefined && (typeof overlay.shadowRadius !== 'number' || overlay.shadowRadius < 0)) {
-          throw new Error(`editVideo: overlays[${i}].shadowRadius must be a non-negative number.`);
-        }
-        if (overlay.shadowOpacity !== undefined && (typeof overlay.shadowOpacity !== 'number' || overlay.shadowOpacity < 0 || overlay.shadowOpacity > 1)) {
-          throw new Error(`editVideo: overlays[${i}].shadowOpacity must be a number between 0.0 and 1.0.`);
-        }
-      }
-      if (overlay.type === 'image') {
-        if (!overlay.uri || typeof overlay.uri !== 'string') {
-          throw new Error(`editVideo: overlays[${i}].uri is required for image overlays.`);
-        }
-        validateUri(overlay.uri, `editVideo: overlays[${i}].uri`);
-        if (typeof overlay.width !== 'number' || overlay.width <= 0 || overlay.width > 1) {
-          throw new Error(`editVideo: overlays[${i}].width must be a number between 0.0 and 1.0.`);
-        }
-        if (typeof overlay.height !== 'number' || overlay.height <= 0 || overlay.height > 1) {
-          throw new Error(`editVideo: overlays[${i}].height must be a number between 0.0 and 1.0.`);
-        }
-      }
-      if (
-        overlay.startMs !== undefined &&
-        overlay.endMs !== undefined &&
-        overlay.startMs >= overlay.endMs
-      ) {
-        throw new Error(`editVideo: overlays[${i}].startMs must be less than endMs.`);
-      }
-    }
-  }
-  if (job.audio !== undefined) {
-    if (!job.audio.uri || typeof job.audio.uri !== 'string') {
-      throw new Error('editVideo: audio.uri is required and must be a non-empty string.');
-    }
-    validateUri(job.audio.uri, 'editVideo: audio.uri');
-    if (job.audio.volume !== undefined && (job.audio.volume < 0 || job.audio.volume > 2)) {
-      throw new Error('editVideo: audio.volume must be between 0.0 and 2.0.');
-    }
-    if (
-      job.audio.originalVolume !== undefined &&
-      (job.audio.originalVolume < 0 || job.audio.originalVolume > 2)
-    ) {
-      throw new Error('editVideo: audio.originalVolume must be between 0.0 and 2.0.');
-    }
-  }
-  if (job.quality !== undefined && !['low', 'medium', 'high'].includes(job.quality)) {
-    throw new Error("editVideo: quality must be 'low', 'medium', or 'high'.");
-  }
-}
+export type ExportOptions = {
+  /** Encode quality preset. Maps to native preset names. Default 'high'. */
+  quality?: 'low' | 'medium' | 'high';
+};
 
 /**
- * Listen for progress events during editVideo().
- * Returns a subscription that must be removed when done.
- *
- * @example
- * const sub = addProgressListener(({ progress }) => console.log(progress));
- * await editVideo(job);
- * sub.remove();
+ * Subscribe to render progress events emitted during `exportProject`.
+ * Returns a subscription whose `.remove()` must be called when done
+ * (typically in a `finally` block alongside the export call).
  */
 export function addProgressListener(callback: (event: ProgressEvent) => void) {
   return emitter.addListener<ProgressEvent>('onProgress', callback);
 }
 
 /**
- * Edit a video: trim, add text/image overlays, mix audio.
- * Returns a file URI pointing to the output video.
+ * Render a Project to an MP4 file. Returns the output file:// URI.
  *
- * Subscribe to progress events with addProgressListener() before calling this.
+ * Subscribe to progress with `addProgressListener` before calling.
+ * The compile step runs on a background thread so this function does
+ * not block the JS thread during JSON parsing.
  */
-export async function editVideo(job: EditJob): Promise<string> {
-  validateEditJob(job);
-
-  // Normalize: inputUri → playlist so native always receives a playlist
-  const playlist: PlaylistItem[] = job.playlist ?? [
-    { type: 'video', uri: job.inputUri!, trim: job.trim },
-  ];
-
-  const jobDict: Record<string, unknown> = { playlist };
-  if (job.outputUri !== undefined) jobDict.outputUri = job.outputUri;
-  if (job.overlays !== undefined) jobDict.overlays = job.overlays;
-  if (job.audio !== undefined) jobDict.audio = job.audio;
-  if (job.quality !== undefined) jobDict.quality = job.quality;
-
-  return ExpoMediaEditModule.editVideo(jobDict);
+export async function exportProject(
+  project: Project,
+  outputUri?: string,
+  options?: ExportOptions
+): Promise<string> {
+  if (outputUri !== undefined) {
+    validateOutputUri(outputUri, 'exportProject: outputUri');
+  }
+  if (options?.quality !== undefined && !['low', 'medium', 'high'].includes(options.quality)) {
+    throw new Error("exportProject: options.quality must be 'low', 'medium', or 'high'.");
+  }
+  return ExpoMediaEditModule.exportProject(project, outputUri ?? null, options ?? null);
 }
 
 /**
- * Cancel an in-progress editVideo() call.
- * The editVideo promise will reject with error code "CANCELLED".
+ * Cancel an in-flight `exportProject` call. The pending export
+ * promise rejects with code "CANCELLED".
  */
-export async function cancelEdit(): Promise<void> {
-  return ExpoMediaEditModule.cancelEdit();
+export async function cancelExport(): Promise<void> {
+  return ExpoMediaEditModule.cancelExport();
 }
 
-/**
- * Get metadata about a video file.
- */
+// ─── Metadata / utilities (unchanged from 0.13.x) ───────────────────
+
 export async function getVideoInfo(uri: string): Promise<VideoInfo> {
   if (!uri || typeof uri !== 'string') {
     throw new Error('getVideoInfo: uri is required and must be a non-empty string.');
@@ -229,10 +91,6 @@ export async function getVideoInfo(uri: string): Promise<VideoInfo> {
   return ExpoMediaEditModule.getVideoInfo(uri);
 }
 
-/**
- * Generate a thumbnail image from a video at the given timestamp.
- * Returns a file URI for the JPEG thumbnail.
- */
 export async function generateThumbnail(
   uri: string,
   timeMs: number,
@@ -248,16 +106,6 @@ export async function generateThumbnail(
   return ExpoMediaEditModule.generateThumbnail(uri, timeMs, options ?? null);
 }
 
-/**
- * Extract the audio track from a video file into a temporary M4A file.
- * Returns a file:// URI pointing to the extracted audio.
- *
- * Useful when feeding video to APIs that only read raw audio formats — e.g.
- * iOS SFSpeechRecognizer via AVAudioFile, which can't read .MOV/.MP4 containers
- * directly but happily reads the extracted .m4a.
- *
- * Rejects with `NO_AUDIO_TRACK` when the source has no audio.
- */
 export async function extractAudio(uri: string): Promise<string> {
   if (!uri || typeof uri !== 'string') {
     throw new Error('extractAudio: uri is required and must be a non-empty string.');
@@ -266,10 +114,6 @@ export async function extractAudio(uri: string): Promise<string> {
   return ExpoMediaEditModule.extractAudio(uri);
 }
 
-/**
- * Delete all temporary files created by expo-media-edit.
- * Returns the number of files deleted.
- */
 export async function cleanTempFiles(): Promise<number> {
   return ExpoMediaEditModule.cleanTempFiles();
 }
