@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.1] - 2026-06-25
+
+### Fixed (iOS)
+
+- **`<MediaPreview>` no longer crashes when overlays are present.**
+  `AVVideoCompositionCoreAnimationTool` is OFFLINE-RENDER ONLY —
+  attaching it to a videoComposition that gets handed to AVPlayerItem
+  throws `NSInvalidArgumentException` at the next play() call:
+  > AVVideoCompositions using AVVideoCompositionCoreAnimationTool
+  > cannot be used with AVPlayerItem. AVVideoCompositionCoreAnimationTool
+  > is for offline rendering only.
+  ProjectCompiler now attaches the overlay animationTool ONLY in
+  `.export` mode. Preview compositions skip the overlay layer
+  entirely — preview shows video + transitions but NOT overlays.
+  Callers who want overlay-in-preview must render their overlays as
+  RN/UIKit views layered on top of `<MediaPreview>`. Real native
+  preview-overlays via `AVSynchronizedLayer` are scheduled for a
+  later release.
+- **Preview render scale temporarily ignored (always 1.0).** Halving
+  `renderSize` without also scaling every layer instruction's
+  transform produced a 2x zoom in the preview canvas (PO repro
+  2026-06-25 — the muppet head filled the entire frame). Until we
+  wire up clean transform-rescaling for the preview path, preview
+  renders at full source resolution and AVPlayerLayer scales for
+  display. `renderScale` prop still accepted for API symmetry but
+  has no effect on iOS.
+
+### Carry-over from 0.15.0
+
+- Android crossfade + fadeToBlack via multi-sequence Composition +
+  AlphaScaleEffect — unchanged in this release.
+
 ## [0.15.0] - 2026-06-25
 
 ### Fixed (Android)

@@ -202,18 +202,18 @@ public class ProjectCompiler {
       }
     }
 
-    // Render scale for preview mode — shrink renderSize but keep the
-    // composition coordinate system the same so overlays/transforms
-    // stay correct.
-    let finalRenderSize: CGSize = {
-      if case .preview(let s) = mode {
-        return CGSize(width: renderSize.width * s, height: renderSize.height * s)
-      }
-      return renderSize
-    }()
-
+    // 0.15.1: the preview-mode renderScale is currently IGNORED.
+    // Halving renderSize without also halving every layer
+    // instruction's transform would draw the source at full size into
+    // the smaller canvas → apparent 2x zoom (bug PO 2026-06-25).
+    // AVMutableVideoCompositionLayerInstruction doesn't expose a clean
+    // accessor for the active transform so post-scaling is fiddly; for
+    // now we render preview at full source res and let AVPlayerLayer
+    // scale for display. Callers can still pass renderScale, it just
+    // has no effect on iOS. Will be revisited if scrub-time perf
+    // measurements show it's worth the extra plumbing.
     let videoComposition = AVMutableVideoComposition()
-    videoComposition.renderSize = finalRenderSize
+    videoComposition.renderSize = renderSize
     videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(project.fps))
     videoComposition.instructions = instructions
 
@@ -224,7 +224,16 @@ public class ProjectCompiler {
         overlays.append(contentsOf: items)
       }
     }
-    if !overlays.isEmpty {
+    // AVVideoCompositionCoreAnimationTool is OFFLINE-RENDER ONLY.
+    // Attaching it to an AVMutableVideoComposition that gets handed to
+    // AVPlayerItem (preview) throws NSInvalidArgumentException at the
+    // moment the player tries to play. Therefore we attach overlays
+    // ONLY for the export path. Preview overlays are out of scope for
+    // 0.15.x — callers that want overlay-in-preview must render them
+    // as RN/UIKit views on top of <MediaPreview>. A future release
+    // will switch the preview path to AVSynchronizedLayer-backed
+    // overlays so Preview = Export holds without crashing.
+    if !overlays.isEmpty, case .export = mode {
       OverlayRenderer.attachOverlays(
         to: videoComposition,
         overlays: overlays,

@@ -1,6 +1,6 @@
 {
   "name": "expo-media-edit",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "description": "Native video composer for Expo — Project document, native preview (AVFoundation + media3), single-source-of-truth render. No FFmpeg.",
   "main": "build/index.js",
   "types": "build/index.d.ts",
