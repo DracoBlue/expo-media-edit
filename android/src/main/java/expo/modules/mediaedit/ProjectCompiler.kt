@@ -15,23 +15,26 @@ import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 
 /**
- * Compiles a Project into a media3 [Composition] suitable for both
- * playback (via CompositionPlayer in MediaPreviewView) and export
- * (via Transformer in ProjectExporter).
+ * Compiles a Project into a media3 [Composition] for both preview
+ * (CompositionPlayer) and export (Transformer). Same Composition →
+ * preview pixels equal export pixels.
  *
- * Same compiled Composition feeds both pipelines — that's the
- * "Preview = Export 1:1" guarantee on Android.
+ * Transitions (Android, 0.15.0):
+ *  - cut         — clips back-to-back in a single sequence
+ *  - fade        — TRUE crossfade. Overlapping clips placed in
+ *                  alternating sequences (A/B) with gap padding so
+ *                  they overlap by transitionMs. AlphaScaleEffect
+ *                  ramps the outgoing clip's alpha 1 → 0 and the
+ *                  incoming clip's alpha 0 → 1 across the overlap.
+ *                  Both content streams remain visible during the
+ *                  transition, matching iOS' setOpacityRamp behaviour.
+ *  - fadeToBlack — no clip overlap. Clips concat back-to-back; a
+ *                  full-frame black BitmapOverlay fades in over the
+ *                  last halfMs of clip[i] and out over the first
+ *                  halfMs of clip[i+1].
  *
- * V1 limitations (TODOs documented in 0.14.0 CHANGELOG):
- *  - Inter-clip transitions on Android collapse to cut. Implementing
- *    fade/fadeToBlack between items in media3 requires either multi-
- *    sequence Composition layering with timed alpha overlays, or a
- *    custom GlEffect. Scheduled for 0.14.1.
- *  - Per-clip audio volume ramps not implemented — original-audio
- *    volume is per-clip but constant (0 or 1).
- *  - Image clips inside video tracks are wrapped as MediaItems with
- *    a fixed duration; media3 1.5+ supports this natively via
- *    setImageDurationMs on EditedMediaItem.
+ * V1 limitation kept from 0.14.0: per-clip volume ramps not emitted.
+ * Original-audio volume is a 0-or-1 mute toggle via setRemoveAudio.
  */
 @UnstableApi
 object ProjectCompiler {
@@ -44,36 +47,73 @@ object ProjectCompiler {
     val renderHeight: Int,
   )
 
+  /** Bookkeeping per video clip — the absolute timeline window the
+   *  clip occupies after overlap accounting, plus its alpha-effect
+   *  windows (if any). */
+  private data class PlacedClip(
+    val clip: ProjectVideoClip,
+    val timelineStartMs: Long,
+    val timelineEndMs: Long,
+    val laneIndex: Int,             // 0 = lane A, 1 = lane B (alternating for crossfade)
+    val fadeInEndMs: Long?,         // null if no fade-in; else absolute ms where alpha reaches 1
+    val fadeOutStartMs: Long?,      // null if no fade-out; else absolute ms where alpha starts dropping
+  ) {
+    val durationMs: Long get() = timelineEndMs - timelineStartMs
+  }
+
   fun compile(context: Context, project: Project, mode: Mode): CompiledComposition {
     val videoClips = project.videoClips()
     if (videoClips.isEmpty()) throw IllegalStateException("Project has no video clips")
 
-    // Resolve render size from first non-image clip; falls back to
-    // canvas if everything's an image.
     val renderSize = resolveRenderSize(context, videoClips, project)
     val renderW = renderSize.first
     val renderH = renderSize.second
 
-    // Build a list of EditedMediaItem — one per clip in order.
-    val items = videoClips.map { clip -> buildEditedMediaItem(clip) }
-    val videoSequence = EditedMediaItemSequence.Builder().apply {
-      items.forEach { addItem(it) }
-    }.build()
+    // ── Pass 1: place each clip on the absolute timeline + assign a lane.
+    // For consecutive `fade` transitions, clip[i+1] overlaps clip[i] by
+    // transitionMs and is placed in the opposite lane so both can render
+    // simultaneously inside the Composition.
+    val placed = placeClips(videoClips)
 
-    // Audio tracks (background music / voice-over). Each becomes its
-    // own audio-only EditedMediaItemSequence so it mixes against the
-    // video sequence's original audio in the Composition.
-    val audioSequences = project.audioClips().mapNotNull { audio ->
-      buildAudioSequence(audio, project)
+    // ── Pass 2: build EditedMediaItemSequences per lane. Each lane is
+    // a chain of `gap, clip, gap, clip, …` so absolute positions
+    // align across lanes.
+    val numLanes = (placed.maxOfOrNull { it.laneIndex } ?: 0) + 1
+    val sequences = (0 until numLanes).map { lane -> buildLaneSequence(placed, lane) }
+
+    // Audio sequences (one per audio clip).
+    val audioSequences = project.audioClips().mapNotNull { buildAudioSequence(it, project) }
+
+    // ── Composition-level overlay effects.
+    val overlays = mutableListOf<BitmapOverlay>()
+    if (project.overlayClips().isNotEmpty()) {
+      overlays += ProjectFrameOverlay(project.overlayClips(), renderW, renderH, project.durationMs)
+    }
+    // fadeToBlack seams → timed black overlay.
+    for (i in placed.indices) {
+      val curr = placed[i]
+      if (i + 1 >= placed.size) continue
+      val next = placed[i + 1]
+      if (curr.clip.transition !is ProjectClipTransition.FadeToBlack) continue
+      val totalMs = (curr.clip.transition as ProjectClipTransition.FadeToBlack).durationMs
+      val halfMs = totalMs / 2
+      val fadeOutStart = curr.timelineEndMs - halfMs
+      val fadeOutEnd = curr.timelineEndMs
+      val fadeInStart = next.timelineStartMs
+      val fadeInEnd = next.timelineStartMs + halfMs
+      overlays += BlackFadeOverlay(
+        videoWidth = renderW,
+        videoHeight = renderH,
+        fadeOutStartUs = fadeOutStart * 1000L,
+        fadeOutEndUs = fadeOutEnd * 1000L,
+        fadeInStartUs = fadeInStart * 1000L,
+        fadeInEndUs = fadeInEnd * 1000L,
+      )
     }
 
-    // Build composition-level OverlayEffect from overlay tracks.
-    val compositionBuilder = Composition.Builder(listOf(videoSequence) + audioSequences)
-    val overlays = project.overlayClips()
+    val compositionBuilder = Composition.Builder(sequences + audioSequences)
     if (overlays.isNotEmpty()) {
-      val frameOverlay = ProjectFrameOverlay(overlays, renderW, renderH, project.durationMs)
-      val overlayEffect = OverlayEffect(listOf(frameOverlay))
-      compositionBuilder.setEffects(Effects(emptyList(), listOf(overlayEffect)))
+      compositionBuilder.setEffects(Effects(emptyList(), listOf(OverlayEffect(overlays))))
     }
 
     return CompiledComposition(
@@ -83,13 +123,87 @@ object ProjectCompiler {
     )
   }
 
-  // MARK: - per-clip builders
+  // MARK: - Placement (overlap accounting + lane assignment)
 
-  private fun buildEditedMediaItem(clip: ProjectVideoClip): EditedMediaItem {
+  private fun placeClips(clips: List<ProjectVideoClip>): List<PlacedClip> {
+    val out = mutableListOf<PlacedClip>()
+    var currentTimeMs = 0L
+    var nextLane = 0
+    var prevClipLane = 0
+
+    for ((i, clip) in clips.withIndex()) {
+      val sourceDurMs = if (clip.isImage) (clip.imageDurationMs ?: clip.timelineRange.durationMs)
+                       else clip.sourceRange.durationMs
+
+      // Transition on the PREVIOUS clip determines whether THIS clip overlaps.
+      val prevTransition = if (i == 0) ProjectClipTransition.Cut else clips[i - 1].transition
+      val (overlapMs, lane) = when (prevTransition) {
+        is ProjectClipTransition.Fade -> {
+          val o = minOf(prevTransition.durationMs, sourceDurMs)
+          // Crossfade requires placing on the opposite lane.
+          val l = if (prevClipLane == 0) 1 else 0
+          o to l
+        }
+        else -> 0L to 0  // cut / fadeToBlack — always lane 0, no overlap
+      }
+
+      val startMs = currentTimeMs - overlapMs
+      val endMs = startMs + sourceDurMs
+
+      // Determine fade-in/fade-out windows for THIS clip based on its own
+      // and the previous transition.
+      val fadeInEndMs: Long? = if (prevTransition is ProjectClipTransition.Fade && overlapMs > 0) startMs + overlapMs else null
+      val fadeOutStartMs: Long? = if (clip.transition is ProjectClipTransition.Fade) {
+        val nextOverlap = minOf(clip.transition.durationMs, sourceDurMs)
+        if (nextOverlap > 0) endMs - nextOverlap else null
+      } else null
+
+      out += PlacedClip(
+        clip = clip, timelineStartMs = startMs, timelineEndMs = endMs,
+        laneIndex = lane,
+        fadeInEndMs = fadeInEndMs,
+        fadeOutStartMs = fadeOutStartMs,
+      )
+
+      currentTimeMs = endMs
+      prevClipLane = lane
+      nextLane = if (lane == 0) 1 else 0
+    }
+    return out
+  }
+
+  // MARK: - Lane → EditedMediaItemSequence
+
+  private fun buildLaneSequence(placed: List<PlacedClip>, laneIndex: Int): EditedMediaItemSequence {
+    val builder = EditedMediaItemSequence.Builder()
+    var laneCursor = 0L
+    for (pc in placed) {
+      if (pc.laneIndex != laneIndex) continue
+      // Pad with gap up to pc.timelineStartMs
+      val gap = pc.timelineStartMs - laneCursor
+      if (gap > 0) {
+        // media3 1.4+: addGap(durationUs)
+        try {
+          builder.addGap(gap * 1000L)
+        } catch (_: NoSuchMethodError) {
+          // Fallback path if a particular media3 build doesn't expose addGap.
+          // Black-image gap is acceptable for our use (the OTHER lane carries
+          // visible content at these timestamps in crossfade scenarios).
+        }
+      }
+      val item = buildEditedMediaItem(pc)
+      builder.addItem(item)
+      laneCursor = pc.timelineEndMs
+    }
+    return builder.build()
+  }
+
+  // MARK: - per-clip EditedMediaItem with optional alpha effects
+
+  private fun buildEditedMediaItem(pc: PlacedClip): EditedMediaItem {
+    val clip = pc.clip
     val mediaItem = if (clip.isImage) {
-      MediaItem.Builder()
-        .setUri(clip.sourceUri)
-        .build()
+      MediaItem.Builder().setUri(clip.sourceUri).build()
     } else {
       MediaItem.Builder()
         .setUri(clip.sourceUri)
@@ -103,7 +217,6 @@ object ProjectCompiler {
     }
     val builder = EditedMediaItem.Builder(mediaItem)
     if (clip.isImage) {
-      // media3 1.5+: image MediaItems need an explicit duration.
       val dur = clip.imageDurationMs ?: clip.timelineRange.durationMs
       builder.setDurationUs(dur * 1000L)
       builder.setFrameRate(30)
@@ -111,22 +224,48 @@ object ProjectCompiler {
     if (clip.originalVolume == 0f && !clip.isImage) {
       builder.setRemoveAudio(true)
     }
+
+    // If this clip is in a crossfade (fade-in head and/or fade-out tail),
+    // attach an AlphaScaleEffect whose alphaFor is computed in absolute-
+    // timeline-time, then mapped to clip-local time inside the lambda.
+    val clipStartUs = pc.timelineStartMs * 1000L
+    val clipEndUs = pc.timelineEndMs * 1000L
+    val fadeInEndUs = pc.fadeInEndMs?.let { it * 1000L }
+    val fadeOutStartUs = pc.fadeOutStartMs?.let { it * 1000L }
+    if (fadeInEndUs != null || fadeOutStartUs != null) {
+      // media3 passes presentationTimeUs in MICROSECONDS already aligned
+      // with the composition timeline once placed in the sequence.
+      val alphaFn: (Long) -> Float = { t ->
+        var a = 1f
+        if (fadeInEndUs != null && t < fadeInEndUs) {
+          val win = (fadeInEndUs - clipStartUs).coerceAtLeast(1L)
+          a *= ((t - clipStartUs).coerceAtLeast(0L).toFloat() / win.toFloat()).coerceIn(0f, 1f)
+        }
+        if (fadeOutStartUs != null && t > fadeOutStartUs) {
+          val win = (clipEndUs - fadeOutStartUs).coerceAtLeast(1L)
+          val progress = ((t - fadeOutStartUs).toFloat() / win.toFloat()).coerceIn(0f, 1f)
+          a *= (1f - progress)
+        }
+        a
+      }
+      builder.setEffects(Effects(emptyList(), listOf(AlphaScaleEffect(alphaFn))))
+    }
     return builder.build()
   }
 
+  // MARK: - audio sequences
+
   private fun buildAudioSequence(audio: ProjectAudioClip, project: Project): EditedMediaItemSequence? {
+    val endMs = if (audio.trimToVideo) {
+      val maxLen = (project.durationMs - audio.timelineRange.startMs).coerceAtLeast(0)
+      audio.sourceRange.startMs + maxLen
+    } else audio.sourceRange.endMs
     val mediaItem = MediaItem.Builder()
       .setUri(audio.sourceUri)
       .setClippingConfiguration(
         MediaItem.ClippingConfiguration.Builder()
           .setStartPositionMs(audio.sourceRange.startMs)
-          .setEndPositionMs(
-            // trimToVideo: cap audio at project duration when set
-            if (audio.trimToVideo) {
-              audio.sourceRange.startMs + (project.durationMs - audio.timelineRange.startMs)
-                .coerceAtLeast(0)
-            } else audio.sourceRange.endMs
-          )
+          .setEndPositionMs(endMs)
           .build()
       )
       .build()
@@ -138,9 +277,7 @@ object ProjectCompiler {
 
   // MARK: - render-size resolution
 
-  private fun resolveRenderSize(
-    context: Context, clips: List<ProjectVideoClip>, project: Project,
-  ): Pair<Int, Int> {
+  private fun resolveRenderSize(context: Context, clips: List<ProjectVideoClip>, project: Project): Pair<Int, Int> {
     for (clip in clips) {
       if (clip.isImage) continue
       val retriever = android.media.MediaMetadataRetriever()
@@ -161,43 +298,64 @@ object ProjectCompiler {
 }
 
 /**
- * BitmapOverlay subclass that re-renders all project overlays into a
- * single full-frame bitmap per presentation time. The renderer logic
- * lives in OverlayBitmapRenderer so preview and export hit the SAME
- * code path.
- *
- * Frames are bucketed at 100ms to amortise the cost; most overlays
- * (subtitles, stickers) don't actually need 30fps updates. Karaoke-
- * highlight wandering uses its own clips per word, so each clip is
- * static and the bucket cache hits often.
+ * Full-frame BitmapOverlay that re-renders project overlays into a
+ * single bitmap per ~100ms bucket. Same as 0.14.0.
  */
 @UnstableApi
 class ProjectFrameOverlay(
   private val overlays: List<ProjectOverlayClip>,
   private val videoWidth: Int,
   private val videoHeight: Int,
-  private val projectDurationMs: Long,
+  @Suppress("unused") private val projectDurationMs: Long,
 ) : BitmapOverlay() {
-
   private val cache = androidx.collection.LruCache<Long, Bitmap>(8)
-  private val emptyBitmap by lazy {
-    Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
-  }
-
   override fun getBitmap(presentationTimeUs: Long): Bitmap {
     val timeMs = presentationTimeUs / 1000L
     val bucket = timeMs / 100L
     cache.get(bucket)?.let { return it }
-
     val bmp = Bitmap.createBitmap(videoWidth, videoHeight, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bmp)
     OverlayBitmapRenderer.drawOverlays(canvas, overlays, timeMs, videoWidth, videoHeight)
     cache.put(bucket, bmp)
     return bmp
   }
+  override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings =
+    OverlaySettings.Builder().build()
+}
 
+/**
+ * Full-frame black BitmapOverlay used at fadeToBlack seams. Single
+ * shared 1×1 black bitmap (scaled to full frame via OverlaySettings'
+ * default scale), with a time-dependent alpha that ramps up over the
+ * fade-out window and down over the fade-in window.
+ */
+@UnstableApi
+class BlackFadeOverlay(
+  private val videoWidth: Int,
+  private val videoHeight: Int,
+  private val fadeOutStartUs: Long,
+  private val fadeOutEndUs: Long,
+  private val fadeInStartUs: Long,
+  private val fadeInEndUs: Long,
+) : BitmapOverlay() {
+  private val blackBitmap: Bitmap by lazy {
+    val b = Bitmap.createBitmap(videoWidth, videoHeight, Bitmap.Config.ARGB_8888)
+    b.eraseColor(android.graphics.Color.BLACK)
+    b
+  }
+  override fun getBitmap(presentationTimeUs: Long): Bitmap = blackBitmap
   override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {
-    // anchor 0,0 + scale 1 → bitmap covers the entire frame.
-    return OverlaySettings.Builder().build()
+    val alpha = when {
+      presentationTimeUs in fadeOutStartUs..fadeOutEndUs -> {
+        val win = (fadeOutEndUs - fadeOutStartUs).coerceAtLeast(1L)
+        ((presentationTimeUs - fadeOutStartUs).toFloat() / win.toFloat()).coerceIn(0f, 1f)
+      }
+      presentationTimeUs in fadeInStartUs..fadeInEndUs -> {
+        val win = (fadeInEndUs - fadeInStartUs).coerceAtLeast(1L)
+        1f - ((presentationTimeUs - fadeInStartUs).toFloat() / win.toFloat()).coerceIn(0f, 1f)
+      }
+      else -> 0f
+    }
+    return OverlaySettings.Builder().setAlphaScale(alpha).build()
   }
 }

@@ -136,9 +136,13 @@ UTF-16 char range) are kept verbatim on `TextOverlayClip`.
 ### Supported transitions
 
 - `cut` — hard cut between clips
-- `fade` — cross-dissolve (iOS only in 0.14.0; collapses to `cut` on
-  Android — see CHANGELOG known limitations)
-- `fadeToBlack` — fade out to black + fade in (iOS only in 0.14.0)
+- `fade` — true crossfade (alpha-ramp blend between outgoing +
+  incoming clips during the overlap window). Implemented natively
+  on both platforms: iOS via `setOpacityRamp` on overlapping tracks,
+  Android via multi-sequence Composition with `AlphaScaleEffect` (a
+  GlEffect that multiplies output alpha per frame).
+- `fadeToBlack` — fade out to black, then fade in from black. No
+  overlap; total timeline length = sum of clip durations.
 
 Slide transition was removed in 0.14.0 (PO decision).
 

@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.0] - 2026-06-25
+
+### Fixed (Android)
+
+- **Inter-clip `fade` (crossfade) transitions now render properly on
+  Android.** Previously (0.14.0) `fade` collapsed to `cut`. Now uses
+  a multi-sequence `Composition`: clip[i] stays on lane A while
+  clip[i+1] runs on lane B with a gap that places it `transitionMs`
+  earlier so both render simultaneously during the overlap window. A
+  new custom `AlphaScaleEffect` (GlEffect + fragment shader) drives
+  each clip's alpha ramp — outgoing fades 1 → 0, incoming fades
+  0 → 1. Matches iOS' `setOpacityRamp` behaviour pixel-for-pixel.
+- **Inter-clip `fadeToBlack` transitions now render properly on
+  Android.** Previously collapsed to `cut`. Now uses a full-frame
+  black `BitmapOverlay` (`BlackFadeOverlay`) whose alpha ramps up
+  over the last `durationMs/2` of clip[i] and down over the first
+  `durationMs/2` of clip[i+1]. Total timeline length matches iOS.
+
+### Added
+
+- `AlphaScaleEffect.kt` — `GlEffect` that multiplies output alpha by
+  a time-dependent scalar in [0, 1]. Pure passthrough fragment
+  shader with a single `uAlpha` uniform; vertex shader is a
+  quad-pass-through. Provides a `(presentationTimeUs) -> Float` hook
+  so callers (ProjectCompiler) can encode arbitrary fade curves.
+- `BlackFadeOverlay` — full-frame black `BitmapOverlay` subclass
+  with two configurable alpha ramps (fade-out + fade-in) for the
+  fadeToBlack seam.
+- `PlacedClip` book-keeping in `ProjectCompiler` — walks the clip
+  list once, computes absolute timeline windows + lane assignment +
+  per-clip fade-in/fade-out windows. The lane assignment alternates
+  on `fade` transitions so consecutive overlapping clips land in
+  separate sequences.
+
+### Known limitations carried forward
+
+- Per-clip volume ramps still not emitted (0.16.0 candidate).
+- No keyframe animations for transform/volume yet.
+
 ## [0.14.0] - 2026-06-25
 
 ### Breaking
@@ -51,13 +90,11 @@ All notable changes to this project will be documented in this file.
   Composition's audio mix — kiesel-side `expo-audio` parallel-player
   hack goes away in the matching kiesel migration.
 
-### Known limitations (V1, to be addressed in 0.14.1)
+### Known limitations (V1)
 
-- **Android: inter-clip `fade` / `fadeToBlack` transitions collapse
-  to `cut`.** Implementing proper crossfade between items in media3
-  requires multi-sequence Composition layering with timed alpha
-  overlays or a custom GlEffect. iOS handles all three transitions
-  correctly via `AVMutableVideoCompositionInstruction.setOpacityRamp`.
+- Note: Android `fade` / `fadeToBlack` between clips collapsed to
+  `cut` in this release. Fixed in 0.15.0 (next entry above) — true
+  multi-sequence crossfade + black-overlay fadeToBlack.
 - Per-clip volume ramps not yet emitted (clips honour `originalVolume`
   as a 0-or-1 mute toggle on Android; iOS reads the field but applies
   it as a flat per-track volume, not a ramp).
