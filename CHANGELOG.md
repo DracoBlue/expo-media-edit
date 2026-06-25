@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.3] - 2026-06-25
+
+### Fixed
+
+- **`<MediaPreview>` playback no longer stutters every ~200ms.** The
+  outer view passes its `scrubPosition` state back as the `time`
+  prop on every React re-render. During playback this state is
+  updated from the `onTime` callback, creating a feedback loop:
+  each onTime event → setScrubPosition → re-render → time prop
+  → native updateTime → seek → pause+seek+resume cycle → audible
+  stutter (PO repro 2026-06-25). Fix: both iOS (AVPlayer) and
+  Android (CompositionPlayer) updateTime handlers now check the
+  player's actual position and skip the seek when the requested
+  time is within 150ms of where the player already is. Real
+  external scrubs (trim handle drag, active-clip-switch jump) are
+  far larger than that and still honoured.
+
 ## [0.15.2] - 2026-06-25
 
 ### Fixed (iOS)

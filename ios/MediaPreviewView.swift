@@ -137,6 +137,18 @@ public class MediaPreviewView: ExpoView {
 
   public func updateTime(_ ms: Double) {
     pendingTimeMs = ms
+    // Tolerance-check: during normal playback the player advances on
+    // its own and the outer view echoes our onTime callback back as
+    // the `time` prop on every React re-render. Re-seeking to a time
+    // we're already at triggers a pause+seek+resume cycle that stutters
+    // playback (PO repro 2026-06-25: "preview unterbricht alle 200ms").
+    // Only seek when the requested time differs from the player's
+    // current position by more than 150ms — covers natural advance
+    // between echoes without blocking real external scrubs.
+    if let p = player {
+      let currentMs = CMTimeGetSeconds(p.currentTime()) * 1000.0
+      if currentMs.isFinite && abs(currentMs - ms) < 150 { return }
+    }
     seek(to: ms)
   }
 

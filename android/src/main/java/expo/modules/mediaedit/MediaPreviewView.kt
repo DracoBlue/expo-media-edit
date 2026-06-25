@@ -95,6 +95,18 @@ class MediaPreviewView(context: Context, appContext: AppContext) : ExpoView(cont
   fun updateTime(ms: Double) {
     val msLong = ms.toLong()
     pendingTimeMs = msLong
+    // Tolerance-check (mirror of the iOS fix): during playback the
+    // player advances on its own and the outer view echoes our time
+    // callback back as the `time` prop on each re-render. Re-seeking
+    // to a position we're already at causes a visible stutter. Only
+    // honour the seek when the delta from the player's current
+    // position is large enough to be a deliberate external scrub
+    // (>150ms).
+    val p = player
+    if (p != null) {
+      val currentMs = p.currentPosition
+      if (Math.abs(currentMs - msLong) < 150) return
+    }
     player?.seekTo(msLong)
   }
 
