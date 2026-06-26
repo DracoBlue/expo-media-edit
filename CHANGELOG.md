@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.4] - 2026-06-26
+
+### Fixed (iOS)
+
+- **Preview overlays no longer render with inverted Y axis.** PO repro
+  2026-06-26: subtitle positioned via the slider at the top of the
+  track (intended y=0 / top of video) appeared at the bottom of the
+  player; stickers placed at the top of the canvas appeared in the
+  middle. Root cause: `OverlayRenderer` computes sublayer positions
+  with `yPos = videoSize.height - y*height - halfH` — that math was
+  written for `AVVideoCompositionCoreAnimationTool`, which renders in
+  the video-native bottom-left coordinate system. The new
+  `AVSynchronizedLayer`-based preview path (0.15.2) renders on screen
+  in UIKit's top-left coords, so the same math flipped every overlay
+  upside-down. Fix: set `isGeometryFlipped = true` on the overlay
+  parent layer inside MediaPreviewView so its sublayers use
+  bottom-left coords. OverlayRenderer's existing code works
+  unchanged for both paths.
+
 ## [0.15.3] - 2026-06-25
 
 ### Fixed

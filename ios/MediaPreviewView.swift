@@ -115,6 +115,17 @@ public class MediaPreviewView: ExpoView {
         videoSize: renderSize,
         videoTotalDuration: cc.composition.duration
       ) {
+        // OverlayRenderer computes sublayer Y as `videoSize.height
+        // - y*height - halfH`, written for AVVideoCompositionCoreAnimationTool
+        // which renders in video-native bottom-left coordinates. The
+        // AVSynchronizedLayer path renders on screen in UIKit
+        // top-left coordinates — without the flip, that math puts y=0
+        // (intended: top of video) at the BOTTOM of the player view
+        // and vice-versa (PO 2026-06-26: "untertitel position ist
+        // genau entgegengesetzt"). Flipping the parent's geometry so
+        // its sublayers use bottom-left origin restores the math
+        // without touching OverlayRenderer.
+        parent.isGeometryFlipped = true
         let synced = AVSynchronizedLayer(playerItem: playerItem)
         synced.addSublayer(parent)
         layer.addSublayer(synced)
