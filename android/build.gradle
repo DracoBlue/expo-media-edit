@@ -1,7 +1,7 @@
 apply plugin: 'com.android.library'
 
 group = 'expo.modules.mediaedit'
-version = '0.15.5'
+version = '0.15.6'
 
 def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
 apply from: expoModulesCorePlugin
@@ -36,7 +36,7 @@ android {
   namespace "expo.modules.mediaedit"
   defaultConfig {
     versionCode 1
-    versionName "0.15.5"
+    versionName "0.15.6"
   }
   lintOptions {
     abortOnError false

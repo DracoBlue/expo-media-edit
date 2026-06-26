@@ -11,16 +11,35 @@ import QuartzCore
 /// TWO output paths, same layer-building code:
 ///   - `attachOverlays(...)` wraps the layers in
 ///     AVVideoCompositionCoreAnimationTool — used by ProjectExporter
-///     (AVAssetExportSession, offline-render-only).
-///   - `buildOverlayLayer(...)` returns the bare parent CALayer
-///     for AVSynchronizedLayer — used by MediaPreviewView (real-time
-///     playback, where the animationTool API is forbidden).
+///     (AVAssetExportSession, offline-render-only). Renders in
+///     CoreAnimation video-native bottom-left coords.
+///   - `buildOverlayLayer(...)` returns the bare parent CALayer for
+///     AVSynchronizedLayer — used by MediaPreviewView (real-time
+///     playback, where the animationTool API is forbidden). Renders
+///     in UIKit top-left coords.
+///
+/// Pre-0.15.6 we tried to share a single bottom-left formula and
+/// flip the synced parent via `isGeometryFlipped = true`. That worked
+/// on paper but produced unexpected layout offsets in practice (PO
+/// 2026-06-26 reported "y=1 → middle, y=0 → way above top"). 0.15.6
+/// replaces the flip hack with an explicit `coordOrigin` parameter
+/// — each caller picks the math that matches its render context.
+public enum OverlayCoordOrigin {
+  /// CoreAnimation video coordinate system: origin at BOTTOM-LEFT,
+  /// y grows upward. Use for AVVideoCompositionCoreAnimationTool.
+  case bottomLeft
+  /// UIKit / on-screen CALayer coordinate system: origin at TOP-LEFT,
+  /// y grows downward. Use for AVSynchronizedLayer / on-screen overlay.
+  case topLeft
+}
+
 public class OverlayRenderer {
 
   /// Build the overlay CALayer tree for `overlays` sized against
   /// `videoSize`. Caller decides whether to wrap in
-  /// AVVideoCompositionCoreAnimationTool (export) or
-  /// AVSynchronizedLayer (preview). `videoTotalDuration` is needed so
+  /// AVVideoCompositionCoreAnimationTool (export, `coordOrigin =
+  /// .bottomLeft`) or AVSynchronizedLayer (preview, `coordOrigin =
+  /// .topLeft`). `videoTotalDuration` is needed so
   /// `applyTimingAnimation` can compute keyTime fractions when
   /// overlays have a timelineRange.
   ///
@@ -29,7 +48,8 @@ public class OverlayRenderer {
   public static func buildOverlayLayer(
     overlays: [ProjectOverlayClip],
     videoSize: CGSize,
-    videoTotalDuration: CMTime
+    videoTotalDuration: CMTime,
+    coordOrigin: OverlayCoordOrigin
   ) -> CALayer? {
     guard !overlays.isEmpty else { return nil }
     let parentLayer = CALayer()
@@ -37,10 +57,10 @@ public class OverlayRenderer {
     for overlay in overlays {
       switch overlay {
       case .text(let opts):
-        let layer = buildTextLayer(opts: opts, videoSize: videoSize, duration: videoTotalDuration)
+        let layer = buildTextLayer(opts: opts, videoSize: videoSize, duration: videoTotalDuration, coordOrigin: coordOrigin)
         parentLayer.addSublayer(layer)
       case .image(let opts):
-        if let layer = buildImageLayer(opts: opts, videoSize: videoSize, duration: videoTotalDuration) {
+        if let layer = buildImageLayer(opts: opts, videoSize: videoSize, duration: videoTotalDuration, coordOrigin: coordOrigin) {
           parentLayer.addSublayer(layer)
         }
       }
@@ -52,7 +72,9 @@ public class OverlayRenderer {
   /// AVVideoCompositionCoreAnimationTool on the videoComposition.
   /// This wraps `buildOverlayLayer` with the additional video-layer
   /// container the tool requires. OFFLINE RENDER ONLY — never use
-  /// on a videoComposition that gets handed to AVPlayerItem.
+  /// on a videoComposition that gets handed to AVPlayerItem. The
+  /// animationTool's parent layer renders in video-native bottom-left
+  /// coords, so we always pass `coordOrigin: .bottomLeft`.
   public static func attachOverlays(
     to videoComposition: AVMutableVideoComposition,
     overlays: [ProjectOverlayClip],
@@ -61,7 +83,8 @@ public class OverlayRenderer {
     guard let overlaysLayer = buildOverlayLayer(
       overlays: overlays,
       videoSize: videoComposition.renderSize,
-      videoTotalDuration: videoTotalDuration
+      videoTotalDuration: videoTotalDuration,
+      coordOrigin: .bottomLeft
     ) else { return }
 
     let videoSize = videoComposition.renderSize
@@ -145,10 +168,50 @@ public class OverlayRenderer {
 
   // MARK: - Layers
 
+  /// Compute the layer's frame.origin.y given an `anchor` and the
+  /// rendered layer height. `coordOrigin` selects which side of the
+  /// parent the y axis grows from.
+  ///
+  /// `y` is a fraction 0..1 of the video height where 0 = TOP of the
+  /// VIDEO and 1 = BOTTOM of the video. This semantic is invariant
+  /// across both coord origins — only the layer-frame conversion
+  /// differs.
+  private static func computeYPos(
+    y: Double, layerHeight: CGFloat,
+    videoHeight: CGFloat, anchor: String,
+    coordOrigin: OverlayCoordOrigin
+  ) -> CGFloat {
+    switch coordOrigin {
+    case .bottomLeft:
+      // CoreAnimation video coord. frame.origin.y is the BOTTOM-LEFT
+      // corner of the layer, measured upward from the parent's
+      // BOTTOM. y=0 (top of video) → layer near top → origin.y near
+      // videoHeight. y=1 (bottom of video) → layer near bottom →
+      // origin.y near 0.
+      if anchor == "topLeft" {
+        return videoHeight - CGFloat(y) * videoHeight - layerHeight
+      } else {
+        return videoHeight - (CGFloat(y) * videoHeight) - layerHeight / 2
+      }
+    case .topLeft:
+      // UIKit on-screen coord. frame.origin.y is the TOP-LEFT corner
+      // of the layer, measured DOWNWARD from the parent's TOP. y=0
+      // (top of video) → layer near top → origin.y near 0. y=1
+      // (bottom of video) → layer near bottom → origin.y near
+      // videoHeight.
+      if anchor == "topLeft" {
+        return CGFloat(y) * videoHeight
+      } else {
+        return CGFloat(y) * videoHeight - layerHeight / 2
+      }
+    }
+  }
+
   private static func buildTextLayer(
     opts: ProjectTextOverlayClip,
     videoSize: CGSize,
-    duration: CMTime
+    duration: CMTime,
+    coordOrigin: OverlayCoordOrigin
   ) -> CALayer {
     let fontSize = CGFloat(opts.fontSize) * videoSize.height / 1080.0
     let maxWidth = videoSize.width * 0.9
@@ -187,14 +250,16 @@ public class OverlayRenderer {
     let layerHeight = ceil(measured.height) + padV * 2
 
     let xPos: CGFloat
-    let yPos: CGFloat
     if opts.anchor == "topLeft" {
       xPos = CGFloat(opts.x) * videoSize.width
-      yPos = videoSize.height - CGFloat(opts.y) * videoSize.height - layerHeight
     } else {
       xPos = CGFloat(opts.x) * videoSize.width - layerWidth / 2
-      yPos = videoSize.height - (CGFloat(opts.y) * videoSize.height) - layerHeight / 2
     }
+    let yPos = computeYPos(
+      y: opts.y, layerHeight: layerHeight,
+      videoHeight: videoSize.height, anchor: opts.anchor,
+      coordOrigin: coordOrigin
+    )
 
     let alignment: CATextLayerAlignmentMode
     switch opts.textAlign {
@@ -238,7 +303,8 @@ public class OverlayRenderer {
   private static func buildImageLayer(
     opts: ProjectImageOverlayClip,
     videoSize: CGSize,
-    duration: CMTime
+    duration: CMTime,
+    coordOrigin: OverlayCoordOrigin
   ) -> CALayer? {
     guard !opts.uri.contains("../") else { return nil }
     let filePath = opts.uri.hasPrefix("file://")
@@ -249,7 +315,14 @@ public class OverlayRenderer {
     let layerWidth = CGFloat(opts.width) * videoSize.width
     let layerHeight = CGFloat(opts.height) * videoSize.height
     let xPos = CGFloat(opts.x) * videoSize.width
-    let yPos = videoSize.height - (CGFloat(opts.y) * videoSize.height) - layerHeight
+    // Image overlays use anchor=topLeft semantics in OverlayRenderer
+    // (legacy convention from 0.13.x). x/y mark the top-left of the
+    // image; layerWidth/Height extend down-right.
+    let yPos = computeYPos(
+      y: opts.y, layerHeight: layerHeight,
+      videoHeight: videoSize.height, anchor: "topLeft",
+      coordOrigin: coordOrigin
+    )
 
     let imageLayer = CALayer()
     imageLayer.contents = image.cgImage

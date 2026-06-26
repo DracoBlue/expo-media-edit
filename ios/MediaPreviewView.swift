@@ -113,19 +113,13 @@ public class MediaPreviewView: ExpoView {
       if let parent = OverlayRenderer.buildOverlayLayer(
         overlays: overlays,
         videoSize: renderSize,
-        videoTotalDuration: cc.composition.duration
+        videoTotalDuration: cc.composition.duration,
+        // Preview renders on-screen in UIKit top-left coords. 0.15.6
+        // replaced the previous isGeometryFlipped-on-parent hack with
+        // an explicit coord-origin parameter on OverlayRenderer so
+        // sublayer Y math matches the actual rendering context.
+        coordOrigin: .topLeft
       ) {
-        // OverlayRenderer computes sublayer Y as `videoSize.height
-        // - y*height - halfH`, written for AVVideoCompositionCoreAnimationTool
-        // which renders in video-native bottom-left coordinates. The
-        // AVSynchronizedLayer path renders on screen in UIKit
-        // top-left coordinates — without the flip, that math puts y=0
-        // (intended: top of video) at the BOTTOM of the player view
-        // and vice-versa (PO 2026-06-26: "untertitel position ist
-        // genau entgegengesetzt"). Flipping the parent's geometry so
-        // its sublayers use bottom-left origin restores the math
-        // without touching OverlayRenderer.
-        parent.isGeometryFlipped = true
         let synced = AVSynchronizedLayer(playerItem: playerItem)
         synced.addSublayer(parent)
         layer.addSublayer(synced)
@@ -212,30 +206,41 @@ public class MediaPreviewView: ExpoView {
   /// 1:1 onto the on-screen video rectangle. The overlay parent was
   /// built against `overlayRenderSize` (the videoComposition's
   /// renderSize); we scale it to fit the playerLayer's videoRect.
+  ///
+  /// Implementation notes: each property is set explicitly via
+  /// `bounds` + `anchorPoint` + `position` + `transform` rather than
+  /// mutating `frame` after-the-fact. Setting `frame` and then
+  /// adjusting anchorPoint/position has subtle ordering quirks that
+  /// previously left the parent occupying only the top-left quadrant
+  /// of the synced layer (PO repro 2026-06-26 — overlays clustered in
+  /// the upper half).
   private func layoutOverlayLayer() {
     guard let synced = syncedLayer, let parent = overlayParent,
           overlayRenderSize.width > 0, overlayRenderSize.height > 0 else { return }
-    let videoRect = playerLayer.videoRect
-    if videoRect.isEmpty {
-      // Asset hasn't loaded yet — fall back to the full bounds so
-      // overlays appear immediately at the right scale, then snap
-      // when videoRect becomes available.
-      let r = bounds.isEmpty ? CGRect(origin: .zero, size: overlayRenderSize) : bounds
-      synced.frame = r
-    } else {
-      synced.frame = videoRect
-    }
 
-    // Parent renders in overlayRenderSize coords. Scale it to fit
-    // synced.frame. Translate origin to (0, 0) of synced.
-    parent.frame = CGRect(origin: .zero, size: overlayRenderSize)
-    let sx = synced.frame.width / overlayRenderSize.width
-    let sy = synced.frame.height / overlayRenderSize.height
-    // anchorPoint at (0,0) so scaling happens from the top-left;
-    // matches the CoreAnimation flipped-Y convention OverlayRenderer
-    // already uses for layout.
-    parent.anchorPoint = .zero
-    parent.position = .zero
+    let videoRect: CGRect = {
+      let rect = playerLayer.videoRect
+      if !rect.isEmpty { return rect }
+      // Asset hasn't loaded yet — fall back to the player layer's
+      // bounds so overlays appear at the right scale immediately.
+      return bounds.isEmpty ? CGRect(origin: .zero, size: overlayRenderSize) : bounds
+    }()
+
+    // Synced layer covers the video rectangle exactly. Use bounds +
+    // position instead of frame so the geometry is unambiguous.
+    synced.bounds = CGRect(origin: .zero, size: videoRect.size)
+    synced.anchorPoint = CGPoint(x: 0, y: 0)
+    synced.position = CGPoint(x: videoRect.minX, y: videoRect.minY)
+
+    // Parent's local coord system is `overlayRenderSize` (the
+    // videoComposition's renderSize — sublayers' x/y values were
+    // computed against this in OverlayRenderer). Scale it to fit the
+    // synced layer's bounds.
+    parent.bounds = CGRect(origin: .zero, size: overlayRenderSize)
+    parent.anchorPoint = CGPoint(x: 0, y: 0)
+    parent.position = CGPoint(x: 0, y: 0)
+    let sx = videoRect.width / overlayRenderSize.width
+    let sy = videoRect.height / overlayRenderSize.height
     parent.transform = CATransform3DMakeScale(sx, sy, 1)
   }
 

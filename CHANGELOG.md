@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.6] - 2026-06-26
+
+### Fixed (iOS)
+
+- **Preview overlay positioning now works at the extremes.** 0.15.4's
+  `isGeometryFlipped`-on-the-parent hack interacted weirdly with
+  AVSynchronizedLayer's layer-positioning math: PO repro 2026-06-26
+  showed subtitles at y=1.0 (intended bottom) rendering at the
+  middle of the screen and y=0.0 (intended top) floating off the
+  top edge. Replaced the flip hack with an explicit `OverlayCoordOrigin`
+  parameter on `OverlayRenderer.buildOverlayLayer` /
+  `buildTextLayer` / `buildImageLayer`:
+  - `.bottomLeft` — CoreAnimation video coords (origin BOTTOM-LEFT).
+    Used by `attachOverlays(...)` for the export animation tool.
+  - `.topLeft` — UIKit on-screen coords (origin TOP-LEFT). Used by
+    `MediaPreviewView` for the AVSynchronizedLayer preview path.
+  Each call site picks the math that matches its render context.
+  No more cross-system flips.
+
+- **MediaPreviewView's overlay layout simplified.** Replaced the
+  `frame = ...; anchorPoint = .zero; position = .zero; transform = ...`
+  sequence (which had subtle ordering quirks that left the overlay
+  parent occupying only the top-left quadrant) with explicit
+  `bounds` + `anchorPoint` + `position` + `transform` mutations. The
+  synced layer's bounds + position track `playerLayer.videoRect`
+  exactly; the parent fills synced via a scale transform applied
+  around the (0,0) anchor.
+
+### Internals
+
+- `OverlayRenderer.computeYPos(...)` — single helper that returns
+  the correct frame-origin Y for either coord origin × either anchor
+  (`topLeft` / `center`). All five previous inline math sites in
+  `buildTextLayer` / `buildImageLayer` now go through it.
+
 ## [0.15.5] - 2026-06-26
 
 ### Fixed (Android)
