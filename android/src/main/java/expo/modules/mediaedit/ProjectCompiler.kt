@@ -9,6 +9,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.OverlaySettings
+import androidx.media3.effect.TextureOverlay
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
@@ -85,7 +86,7 @@ object ProjectCompiler {
     val audioSequences = project.audioClips().mapNotNull { buildAudioSequence(it, project) }
 
     // ── Composition-level overlay effects.
-    val overlays = mutableListOf<BitmapOverlay>()
+    val overlays = mutableListOf<TextureOverlay>()
     if (project.overlayClips().isNotEmpty()) {
       overlays += ProjectFrameOverlay(project.overlayClips(), renderW, renderH, project.durationMs)
     }

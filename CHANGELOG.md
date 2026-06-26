@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.5] - 2026-06-26
+
+### Fixed (Android)
+
+- **Android build now compiles** (regression from 0.15.0).
+  Two type errors surfaced by EAS Build on the 0.15.3 cycle that had
+  been there since the media3 introduction:
+  - `AlphaScaleEffect.kt` imported `android.util.Size`; media3's
+    `BaseGlShaderProgram.configure` returns
+    `androidx.media3.common.util.Size`. Override mismatch →
+    "Return type of 'configure' is not a subtype". Fixed the import.
+  - `ProjectCompiler.kt` declared `mutableListOf<BitmapOverlay>()`
+    and passed it to `OverlayEffect(...)`, which expects
+    `List<TextureOverlay>` (the superclass). Kotlin's invariant
+    `List<T>` rejected the implicit upcast. Typed the list as
+    `mutableListOf<TextureOverlay>()` (both `BitmapOverlay`
+    subclasses we add — ProjectFrameOverlay + BlackFadeOverlay —
+    satisfy it).
+
+No behavior change; only made the code that was already there
+actually compile.
+
 ## [0.15.4] - 2026-06-26
 
 ### Fixed (iOS)

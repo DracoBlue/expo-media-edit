@@ -2,14 +2,14 @@ package expo.modules.mediaedit
 
 import android.content.Context
 import android.opengl.GLES20
-import android.util.Size
 import androidx.media3.common.VideoFrameProcessingException
 import androidx.media3.common.util.GlProgram
 import androidx.media3.common.util.GlUtil
+import androidx.media3.common.util.Size
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.BaseGlShaderProgram
 import androidx.media3.effect.GlEffect
 import androidx.media3.effect.GlShaderProgram
-import androidx.media3.effect.BaseGlShaderProgram
 
 /**
  * GlEffect that multiplies each output pixel's alpha channel by a
